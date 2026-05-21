@@ -1,0 +1,10 @@
+{
+  "packages": [
+  ],
+  "extensions": [
+    "-../src/index.ts"
+  ],
+  "skills": [
+    "./skills/run-integration-tests/SKILL.md"
+  ]
+}

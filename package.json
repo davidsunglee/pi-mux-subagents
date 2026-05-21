@@ -1,0 +1,60 @@
+{
+  "name": "@aphotic/pi-mux-subagents",
+  "version": "0.1.0",
+  "description": "Interactive + headless subagent framework for pi and Claude Code, with mux-pane support, sync/async orchestration, and a multi-CLI design.",
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "author": "David Lee",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/davidsunglee/pi-mux-subagents.git"
+  },
+  "type": "module",
+  "packageManager": "pnpm@11.1.3",
+  "bin": {
+    "pi-mux-detect": "src/bin/pi-mux-detect.js"
+  },
+  "scripts": {
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
+    "test": "node --test test/test.ts test/system-prompt-mode.test.ts test/plugin-*.test.ts test/orchestration/*.test.ts",
+    "test:integration": "node --import ./test/integration/clear-subagent-env.ts --test test/integration/*.test.ts",
+    "test:integration:slow": "PI_RUN_SLOW=1 node --import ./test/integration/clear-subagent-env.ts --test test/integration/headless-prompt-composition.test.ts test/integration/orchestration-headless-async-backend.test.ts test/integration/orchestration-headless-block-backend.test.ts test/integration/orchestration-pane-async-backend.test.ts test/integration/orchestration-pane-block-backend.test.ts test/integration/claude-sentinel-roundtrip.test.ts test/integration/pane-claude-interactive.test.ts test/integration/orchestration-claude-pane-serial.test.ts test/integration/orchestration-claude-pane-parallel.test.ts test/integration/orchestration-claude-pane-spec-designer-e2e.test.ts test/integration/coordinator-orchestration-tools.test.ts",
+    "test:plugin": "node --test test/plugin-*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build:plugin": "tsc -p src/claude-plugin",
+    "build:cli": "esbuild src/bin/pi-mux-detect.ts --bundle --platform=node --format=esm --outfile=src/bin/pi-mux-detect.js --banner:js='#!/usr/bin/env node' && chmod +x src/bin/pi-mux-detect.js",
+    "build": "pnpm run lint && pnpm run typecheck && pnpm run build:plugin && pnpm run build:cli",
+    "check": "pnpm run build && pnpm test"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "esbuild": "^0.25.0",
+    "@earendil-works/pi-coding-agent": "0.75.3",
+    "@earendil-works/pi-tui": "0.75.3",
+    "@types/node": "^25.6.0",
+    "eslint": "^10.2.1",
+    "typebox": "^1.1.34",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.59.1"
+  }
+}
