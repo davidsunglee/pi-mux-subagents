@@ -212,8 +212,12 @@ export function makeHeadlessBackend(ctx: {
         abort,
       };
       const emit = (snap: BackendResult): void => emitPartial(entry, snap);
+      // Unknown/typo cli values are documented to fall back to the pi path
+      // (see OrchestrationTaskSchema.cli), so they must carry pi session/activity
+      // metadata too. Only Claude and Codex own the late-bound metadata path.
+      const isPiLike = isPiLikeCli(spec.effectiveCli);
       let piActivityFile: string | undefined;
-      if (spec.effectiveCli === "pi") {
+      if (isPiLike) {
         piActivityFile = getSubagentActivityFile(spec.artifactDir, id);
         mkdirSync(dirname(piActivityFile), { recursive: true });
       }
@@ -233,7 +237,7 @@ export function makeHeadlessBackend(ctx: {
         // Pi children: session file is known at launch.
         // Claude/Codex children: session key is late-bound (Claude via onSessionKey
         // hook; Codex via the JSONL thread.started event), so it is omitted here.
-        ...(spec.effectiveCli === "pi" ? { sessionKey: spec.subagentSessionFile, activityFile: piActivityFile } : {}),
+        ...(isPiLike ? { sessionKey: spec.subagentSessionFile, activityFile: piActivityFile } : {}),
       };
     },
 
@@ -274,6 +278,17 @@ export function makeHeadlessBackend(ctx: {
       }
     },
   };
+}
+
+/**
+ * Whether a resolved cli routes through the pi headless runner. `claude` and
+ * `codex` own dedicated runners with late-bound session/activity metadata;
+ * every other value (including unknown/typo cli strings) falls back to pi per
+ * the documented OrchestrationTaskSchema.cli contract, so it must carry the
+ * pi session key and activity file.
+ */
+function isPiLikeCli(effectiveCli: string): boolean {
+  return effectiveCli !== "claude" && effectiveCli !== "codex";
 }
 
 interface RunParams {
@@ -960,7 +975,8 @@ function makeAbortedResult(
     elapsedMs: Date.now() - startTime,
     error: "aborted",
     // Include sessionKey for pi children so the caller can still route to the registry.
-    ...(spec.effectiveCli === "pi" ? { sessionKey: spec.subagentSessionFile } : {}),
+    // Unknown/typo cli values fall back to the pi path and own a session key too.
+    ...(isPiLikeCli(spec.effectiveCli) ? { sessionKey: spec.subagentSessionFile } : {}),
     usage,
     transcript,
   };
