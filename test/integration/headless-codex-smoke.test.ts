@@ -1,11 +1,12 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { makeHeadlessBackend } from "../../src/backends/headless.ts";
+import { buildCodexExecArgs } from "../../src/backends/codex-stream.ts";
 import { SLOW_LANE_OPT_IN, getTestModel } from "./harness.ts";
 
 const CODEX_AVAILABLE = (() => {
@@ -16,6 +17,50 @@ const CODEX_AVAILABLE = (() => {
     return false;
   }
 })();
+
+// Parse-only smoke: validates that the resume argv shape produced by
+// buildCodexExecArgs is actually accepted by the installed Codex CLI's argument
+// parser. This is cheap (no model turn), so it runs whenever codex is present —
+// it does not require the slow lane. It deterministically no-ops when codex is
+// absent.
+describe("headless-codex resume argv parses against real CLI", { skip: !CODEX_AVAILABLE, timeout: 30_000 }, () => {
+  it("codex accepts `exec [opts] resume <id> -` arg ordering", () => {
+    const args = buildCodexExecArgs(
+      {
+        codexModelArg: undefined,
+        effectiveThinking: undefined,
+        effectiveExecutionPolicy: "guarded",
+        resumeSessionId: "00000000-0000-0000-0000-000000000000",
+      } as any,
+      { outputLastMessageFile: join(tmpdir(), "codex-parse-smoke.txt"), cwd: tmpdir() },
+    );
+    // Sanity: exec-level flags precede the `resume` subcommand.
+    const resumeIdx = args.indexOf("resume");
+    assert.ok(resumeIdx > args.indexOf("--cd"), "--cd must precede resume in built argv");
+
+    let combined = "";
+    try {
+      // Empty stdin + bogus session id: parsing succeeds, then Codex bails out
+      // *after* the parser (e.g. "No prompt provided via stdin" / session lookup).
+      combined = execFileSync("codex", args, {
+        input: "",
+        timeout: 20_000,
+        stdio: ["pipe", "pipe", "pipe"],
+        encoding: "utf8",
+      });
+    } catch (err: any) {
+      combined = `${err?.stdout ?? ""}\n${err?.stderr ?? ""}`;
+    }
+    assert.ok(
+      !/unexpected argument/i.test(combined),
+      `Codex rejected the resume argv ordering: ${combined}`,
+    );
+    assert.ok(
+      !/unexpected argument '--cd'/i.test(combined),
+      `Codex rejected --cd placement: ${combined}`,
+    );
+  });
+});
 
 describe("headless-codex-smoke", { skip: !CODEX_AVAILABLE || !SLOW_LANE_OPT_IN, timeout: 180_000 }, () => {
   let origMode: string | undefined;

@@ -69,11 +69,34 @@ describe("buildCodexExecArgs — headless guarded", () => {
     assert.equal(args.includes("--sandbox"), false, "unrestricted must not include --sandbox");
   });
 
-  it("resumeSessionId set → argv starts exec resume <id>", () => {
+  it("resumeSessionId set → exec-level options precede `resume <id> -`", () => {
     const args = buildCodexExecArgs({ ...baseSpec, resumeSessionId: "ses-abc-123" }, baseOpts);
+    // `resume` is an `exec` subcommand: exec-level options (`--cd`, `--sandbox`,
+    // `--json`, ...) must come BEFORE `resume`, otherwise the real Codex CLI
+    // rejects them (e.g. "unexpected argument '--cd'").
     assert.equal(args[0], "exec");
-    assert.equal(args[1], "resume");
-    assert.equal(args[2], "ses-abc-123");
+    const resumeIdx = args.indexOf("resume");
+    assert.notEqual(resumeIdx, -1, "argv must contain a `resume` token");
+    assert.equal(args[resumeIdx + 1], "ses-abc-123", "session id must immediately follow `resume`");
+    // The follow-up prompt is delivered via stdin, marked by a trailing `-`.
+    assert.equal(args[resumeIdx + 2], "-", "resume must end with `-` so the prompt is read from stdin");
+    assert.equal(resumeIdx + 2, args.length - 1, "`-` must be the final argv token");
+
+    // exec-level options that `resume` does not accept must precede the subcommand.
+    const cdIdx = args.indexOf("--cd");
+    assert.ok(cdIdx !== -1 && cdIdx < resumeIdx, "--cd must precede `resume`");
+    const sandboxIdx = args.indexOf("--sandbox");
+    assert.ok(sandboxIdx !== -1 && sandboxIdx < resumeIdx, "--sandbox must precede `resume`");
+    const jsonIdx = args.indexOf("--json");
+    assert.ok(jsonIdx !== -1 && jsonIdx < resumeIdx, "--json must precede `resume`");
+    const outIdx = args.indexOf("--output-last-message");
+    assert.ok(outIdx !== -1 && outIdx < resumeIdx, "--output-last-message must precede `resume`");
+  });
+
+  it("no resume → argv contains no `resume` token and no trailing `-`", () => {
+    const args = buildCodexExecArgs(baseSpec, baseOpts);
+    assert.equal(args.includes("resume"), false, "non-resume argv must not contain `resume`");
+    assert.equal(args[args.length - 1] === "-", false, "non-resume argv must not end with `-`");
   });
 
   it("codexModelArg → --model <bare>", () => {

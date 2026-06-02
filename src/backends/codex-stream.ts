@@ -23,7 +23,10 @@ export function buildCodexExecArgs(
   opts: { outputLastMessageFile: string; cwd: string },
 ): string[] {
   const args: string[] = ["exec"];
-  if (spec.resumeSessionId) args.push("resume", spec.resumeSessionId);
+  // `resume` is an `exec` subcommand. Exec-level options (`--cd`, `--sandbox`,
+  // `--json`, `--output-last-message`, `--model`, `-c`, ...) must be emitted
+  // BEFORE the `resume` token — the real Codex CLI rejects them when they
+  // follow `resume <id>` (e.g. "unexpected argument '--cd' found").
   args.push(
     "--json", "--output-last-message", opts.outputLastMessageFile,
     "--cd", opts.cwd, "--skip-git-repo-check",
@@ -32,6 +35,10 @@ export function buildCodexExecArgs(
   const effort = codexReasoningEffort(spec.effectiveThinking);
   if (effort) args.push("-c", `model_reasoning_effort="${effort}"`);
   args.push(...codexSandboxArgs(spec.effectiveExecutionPolicy, "headless"));
+  // Resume the prior session after the exec-level options. The trailing `-`
+  // is the PROMPT positional for `codex exec resume`, telling Codex to read the
+  // follow-up prompt from stdin (the runner already writes spec.fullTask there).
+  if (spec.resumeSessionId) args.push("resume", spec.resumeSessionId, "-");
   return args;
 }
 
