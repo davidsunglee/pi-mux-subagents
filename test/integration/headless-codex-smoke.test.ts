@@ -38,7 +38,7 @@ describe("headless-codex resume argv parses against real CLI", { skip: !CODEX_AV
     const resumeIdx = args.indexOf("resume");
     assert.ok(resumeIdx > args.indexOf("--cd"), "--cd must precede resume in built argv");
 
-    let combined = "";
+    let combined: string;
     try {
       // Empty stdin + bogus session id: parsing succeeds, then Codex bails out
       // *after* the parser (e.g. "No prompt provided via stdin" / session lookup).

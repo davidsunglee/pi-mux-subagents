@@ -1,7 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   getAvailableBackends, setBackend, restoreBackend,

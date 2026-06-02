@@ -1,4 +1,4 @@
-import type { TranscriptContent, TranscriptMessage, UsageStats } from "./types.ts";
+import type { TranscriptMessage, UsageStats } from "./types.ts";
 import type { ResolvedLaunchSpec } from "../launch/launch-spec.ts";
 import { shellEscape } from "../mux/shell.ts";
 

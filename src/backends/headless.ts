@@ -857,7 +857,7 @@ async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
 
       // Archive the teed JSONL stream. Failure (EACCES, ENOSPC) degrades to
       // transcriptPath=null rather than rejecting the close handler.
-      let transcriptPath: string | null = null;
+      let transcriptPath: string | null;
       try {
         const destDir = join(homedir(), ".pi", "agent", "sessions", "codex-cli");
         mkdirSync(destDir, { recursive: true });
