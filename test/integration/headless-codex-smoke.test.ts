@@ -7,6 +7,7 @@ import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { makeHeadlessBackend } from "../../src/backends/headless.ts";
 import { buildCodexExecArgs } from "../../src/backends/codex-stream.ts";
+import { buildCodexMcpOverrideArgs } from "../../src/backends/codex-mcp.ts";
 import { SLOW_LANE_OPT_IN, getTestModel } from "./harness.ts";
 
 const CODEX_AVAILABLE = (() => {
@@ -58,6 +59,54 @@ describe("headless-codex resume argv parses against real CLI", { skip: !CODEX_AV
     assert.ok(
       !/unexpected argument '--cd'/i.test(combined),
       `Codex rejected --cd placement: ${combined}`,
+    );
+  });
+
+  // Real-CLI regression for the pane completion-tool auto-approval. The generated
+  // overrides MUST include a subagent_done auto-approval scoped to the
+  // pi_subagent server, and the installed Codex CLI MUST recognize it. We assert
+  // both via `--strict-config`, which errors ("unknown configuration field" /
+  // "unknown variant") on any unrecognized key or invalid approval_mode value.
+  // Without the fix the override is absent (so the pane has no way to run
+  // subagent_done unattended); with a wrong key/value strict-config would reject it.
+  it("generated MCP overrides auto-approve subagent_done and are accepted by the real CLI (--strict-config)", () => {
+    const mcpArgs = buildCodexMcpOverrideArgs({ sentinelFile: join(tmpdir(), "codex-approval-smoke.done") });
+    const joined = mcpArgs.join(" ");
+    assert.ok(
+      joined.includes('mcp_servers.pi_subagent.tools.subagent_done.approval_mode="approve"'),
+      `generated overrides must auto-approve subagent_done; got: ${joined}`,
+    );
+
+    // Run the real CLI with the exact generated overrides under strict config.
+    // A trivial prompt + workspace-write/never keeps this cheap and deterministic;
+    // the point is the config-load phase, which validates the mcp_servers.*.tools
+    // keys before any model turn.
+    let combined: string;
+    try {
+      combined = execFileSync(
+        "codex",
+        [
+          "exec", "--strict-config", "--skip-git-repo-check",
+          "--sandbox", "workspace-write", "-c", 'approval_policy="never"',
+          ...mcpArgs,
+          "Reply with exactly: OK",
+        ],
+        { input: "", timeout: 60_000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf8" },
+      );
+    } catch (err: any) {
+      combined = `${err?.stdout ?? ""}\n${err?.stderr ?? ""}`;
+    }
+    assert.ok(
+      !/unknown configuration field/i.test(combined),
+      `Codex rejected a generated MCP override field: ${combined}`,
+    );
+    assert.ok(
+      !/unknown variant/i.test(combined),
+      `Codex rejected the approval_mode value: ${combined}`,
+    );
+    assert.ok(
+      !/error loading config\.toml/i.test(combined),
+      `Codex failed to load config with generated overrides: ${combined}`,
     );
   });
 });

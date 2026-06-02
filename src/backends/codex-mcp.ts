@@ -18,5 +18,14 @@ export function buildCodexMcpOverrideArgs(input: { sentinelFile: string; serverP
     "-c", `mcp_servers.${name}.command="node"`,
     "-c", `mcp_servers.${name}.args=["${serverPath}"]`,
     "-c", `mcp_servers.${name}.env.${CODEX_SENTINEL_ENV}="${input.sentinelFile}"`,
+    // Auto-approve ONLY the internal completion tool. Guarded pane mode runs with
+    // `--ask-for-approval on-request`, so without this the unattended pane has no
+    // human to approve the `subagent_done` MCP call — Codex cancels it ("user
+    // cancelled MCP tool call") and the sentinel is never written, hanging the
+    // watcher. Scoping the override to tools.subagent_done.approval_mode="approve"
+    // (a recognized Codex field; variants: auto|prompt|approve) lets only the
+    // completion tool run unattended while every shell command / other tool keeps
+    // the guarded sandbox + approval policy. (Verified against Codex CLI 0.136.0.)
+    "-c", `mcp_servers.${name}.tools.subagent_done.approval_mode="approve"`,
   ];
 }
