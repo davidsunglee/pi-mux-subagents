@@ -109,13 +109,13 @@ export const SubagentParams = Type.Object({
   cli: Type.Optional(
     Type.String({
       description:
-        "CLI to launch for this subagent. One of 'pi' (default) or 'claude'. Overrides the agent frontmatter `cli` field.",
+        "CLI to launch for this subagent. One of 'pi' (default), 'claude', or 'codex'. Overrides the agent frontmatter `cli` field.",
     }),
   ),
   thinking: Type.Optional(
     Type.String({
       description:
-        "Thinking/effort override. Values: off, minimal, low, medium, high, xhigh. For pi: folded into the model string as `<model>:<thinking>`. For Claude: mapped to --effort (off/minimal/low→low, medium, high, xhigh→max). Overrides agent frontmatter.",
+        "Thinking/effort override. Values: off, minimal, low, medium, high, xhigh. For pi: folded into the model string as `<model>:<thinking>`. For Claude: mapped to --effort (off/minimal/low→low, medium, high, xhigh→max). For Codex: mapped to -c model_reasoning_effort=<minimal|low|medium|high|xhigh>; unsupported values (e.g. off) are omitted. Overrides agent frontmatter.",
     }),
   ),
   focus: Type.Optional(
@@ -133,7 +133,7 @@ export const SubagentParams = Type.Object({
   executionPolicy: Type.Optional(
     Type.String({
       description:
-        "CLI-agnostic execution policy. 'guarded' (default) prefers the backend's safest practical autonomous mode; for Claude this is --permission-mode auto, keeping the permission classifier in the loop. 'unrestricted' opts into bypass/full-access behavior for trusted, sandboxed runs; for Claude this restores --dangerously-skip-permissions (pane) / --permission-mode bypassPermissions (headless). Overrides agent frontmatter `execution-policy`.",
+        "CLI-agnostic execution policy. 'guarded' (default) prefers the backend's safest practical autonomous mode; for Claude this is --permission-mode auto, keeping the permission classifier in the loop. 'unrestricted' opts into bypass/full-access behavior for trusted, sandboxed runs; for Claude this restores --dangerously-skip-permissions (pane) / --permission-mode bypassPermissions (headless). For Codex: guarded → --sandbox workspace-write with non-interactive approval_policy=never (headless) / --ask-for-approval on-request (pane); unrestricted → --dangerously-bypass-approvals-and-sandbox. Overrides agent frontmatter `execution-policy`.",
     }),
   ),
 });
@@ -149,6 +149,8 @@ export interface ResolvedLaunchSpec {
   effectiveModel: string | undefined;
   /** Claude-only projection of `effectiveModel`: strips a leading `<provider>/` prefix. */
   claudeModelArg: string | undefined;
+  /** Codex-only projection of `effectiveModel`: strips a leading `<provider>/` prefix (same contract as claudeModelArg). */
+  codexModelArg: string | undefined;
   effectiveTools: string | undefined;
   effectiveSkills: string | undefined;
   effectiveThinking: string | undefined;
@@ -602,6 +604,7 @@ export function resolveLaunchSpec(
   const effectiveThinking = params.thinking ?? agentDefs?.thinking;
   const effectiveCli = params.cli ?? agentDefs?.cli ?? "pi";
   const claudeModelArg = projectModelForClaude(effectiveModel);
+  const codexModelArg = projectModelForClaude(effectiveModel);
 
   // Execution policy: params override agent frontmatter override the safe
   // default. `executionPolicySource` records which input won so callers/tests
@@ -697,6 +700,7 @@ export function resolveLaunchSpec(
 
     effectiveModel,
     claudeModelArg,
+    codexModelArg,
     effectiveTools,
     effectiveSkills,
     effectiveThinking,
@@ -752,7 +756,7 @@ export function warnGuardedPolicyUnsupported(
   spec: Pick<ResolvedLaunchSpec, "effectiveCli" | "effectiveExecutionPolicy" | "executionPolicySource" | "name">,
   write: (msg: string) => void = (m) => void process.stderr.write(m),
 ): void {
-  if (spec.effectiveCli === "claude") return;
+  if (spec.effectiveCli === "claude" || spec.effectiveCli === "codex") return;
   if (spec.effectiveExecutionPolicy !== "guarded") return;
   if (spec.executionPolicySource === "default") return;
   write(

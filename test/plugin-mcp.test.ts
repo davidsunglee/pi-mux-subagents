@@ -94,6 +94,34 @@ describe("plugin-mcp pi-subagent server", { skip: SHOULD_SKIP }, () => {
     }
   });
 
+  it("subagent_done writes to PI_SUBAGENT_DONE_SENTINEL when set", async () => {
+    const sentinel = join(dir, "sentinel-subagent-done-env");
+    await withClient({ PI_SUBAGENT_DONE_SENTINEL: sentinel, PI_CLAUDE_SENTINEL: undefined }, async (client) => {
+      const out = await client.callTool({
+        name: "subagent_done",
+        arguments: { message: "done via neutral sentinel" },
+      });
+      assert.equal(out.isError, undefined, `unexpected error: ${JSON.stringify(out)}`);
+      assert.ok(existsSync(sentinel), "sentinel file must be written to PI_SUBAGENT_DONE_SENTINEL");
+      assert.equal(readFileSync(sentinel, "utf-8"), "done via neutral sentinel");
+    });
+  });
+
+  it("PI_SUBAGENT_DONE_SENTINEL takes precedence over PI_CLAUDE_SENTINEL when both are set", async () => {
+    const sentinelSubagent = join(dir, "sentinel-precedence-subagent");
+    const sentinelClaude = join(dir, "sentinel-precedence-claude");
+    await withClient({ PI_SUBAGENT_DONE_SENTINEL: sentinelSubagent, PI_CLAUDE_SENTINEL: sentinelClaude }, async (client) => {
+      const out = await client.callTool({
+        name: "subagent_done",
+        arguments: { message: "written to neutral" },
+      });
+      assert.equal(out.isError, undefined, `unexpected error: ${JSON.stringify(out)}`);
+      assert.ok(existsSync(sentinelSubagent), "write must land at PI_SUBAGENT_DONE_SENTINEL");
+      assert.equal(existsSync(sentinelClaude), false, "PI_CLAUDE_SENTINEL must NOT be written when PI_SUBAGENT_DONE_SENTINEL is set");
+      assert.equal(readFileSync(sentinelSubagent, "utf-8"), "written to neutral");
+    });
+  });
+
   it("uses atomic-rename so the sentinel file never appears with partial content", async () => {
     // Drive 5 sequential invocations with different payloads. After each, the
     // file MUST exist with the exact payload written most recently — never an

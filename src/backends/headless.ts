@@ -1,6 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { spawn as realSpawn, type ChildProcess } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { getSubagentActivityFile } from "../launch/activity.ts";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -15,7 +15,8 @@ import {
 } from "../launch/launch-spec.ts";
 import { seedSubagentSessionFile } from "../launch/session.ts";
 import { buildClaudeHeadlessArgs, parseClaudeStreamEvent, parseClaudeResult } from "./claude-stream.ts";
-import { warnClaudeSkillsDropped } from "../index.ts";
+import { buildCodexExecArgs, parseCodexEvent, parseCodexUsage, extractCodexSessionId } from "./codex-stream.ts";
+import { warnClaudeSkillsDropped, warnCodexUnsupportedFeatures } from "../index.ts";
 import type {
   Backend,
   BackendLaunchParams,
@@ -212,7 +213,7 @@ export function makeHeadlessBackend(ctx: {
       };
       const emit = (snap: BackendResult): void => emitPartial(entry, snap);
       let piActivityFile: string | undefined;
-      if (spec.effectiveCli !== "claude") {
+      if (spec.effectiveCli === "pi") {
         piActivityFile = getSubagentActivityFile(spec.artifactDir, id);
         mkdirSync(dirname(piActivityFile), { recursive: true });
       }
@@ -220,7 +221,9 @@ export function makeHeadlessBackend(ctx: {
       entry.promise =
         spec.effectiveCli === "claude"
           ? runClaudeHeadless({ id, spec, startTime, abort: abort.signal, ctx, emitPartial: emit })
-          : runPiHeadless({ id, spec, startTime, abort: abort.signal, ctx, emitPartial: emit });
+          : spec.effectiveCli === "codex"
+            ? runCodexHeadless({ id, spec, startTime, abort: abort.signal, ctx, emitPartial: emit })
+            : runPiHeadless({ id, spec, startTime, abort: abort.signal, ctx, emitPartial: emit });
 
       launches.set(id, entry);
       return {
@@ -228,8 +231,9 @@ export function makeHeadlessBackend(ctx: {
         name: spec.name,
         startTime,
         // Pi children: session file is known at launch.
-        // Claude children: session key is late-bound via onSessionKey hook.
-        ...(spec.effectiveCli !== "claude" ? { sessionKey: spec.subagentSessionFile, activityFile: piActivityFile } : {}),
+        // Claude/Codex children: session key is late-bound (Claude via onSessionKey
+        // hook; Codex via the JSONL thread.started event), so it is omitted here.
+        ...(spec.effectiveCli === "pi" ? { sessionKey: spec.subagentSessionFile, activityFile: piActivityFile } : {}),
       };
     },
 
@@ -699,6 +703,210 @@ async function runClaudeHeadless(p: RunParams): Promise<BackendResult> {
   });
 }
 
+// Codex CLI children run `codex exec --json` and deliver the prompt via stdin.
+// Like the Claude path, they cannot call pi's `caller_ping` tool, so this runner
+// never populates `BackendResult.ping`. The JSONL stream is teed to an archive
+// file under ~/.pi/agent/sessions/codex-cli/ for later inspection.
+async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
+  const { id, spec, startTime, abort, ctx, emitPartial: emit } = p;
+  const transcript: TranscriptMessage[] = [];
+  const usage: UsageStats = emptyUsage();
+  let hasRealUsage = false;
+  let stderr = "";
+  let sessionId: string | undefined;
+  let sawTerminal = false;
+  const rawLines: string[] = []; // teed JSONL for archival
+
+  warnCodexUnsupportedFeatures(spec.name, spec.effectiveSkills, spec.effectiveTools);
+
+  const cwd = spec.effectiveCwd ?? ctx.cwd;
+  const outFile = join(spec.artifactDir, "codex", `${id}-last-message.txt`);
+  mkdirSync(dirname(outFile), { recursive: true });
+  const args = buildCodexExecArgs(spec, { outputLastMessageFile: outFile, cwd });
+
+  // Resume requires a session id; if resumeSessionId is an empty string, fail
+  // deterministically rather than spawning a `codex exec resume` with no id.
+  if (spec.resumeSessionId !== undefined && spec.resumeSessionId.trim() === "") {
+    return {
+      name: spec.name, finalMessage: "", transcriptPath: null, exitCode: 1,
+      elapsedMs: Date.now() - startTime,
+      error: "codex resume requested without a session id",
+    };
+  }
+
+  if (abort.aborted) return makeAbortedResult(spec, startTime, transcript, usage);
+
+  return new Promise<BackendResult>((resolve) => {
+    let proc: ChildProcess;
+    try {
+      proc = spawnImpl("codex", args, {
+        cwd,
+        shell: false,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, ...spec.configRootEnv },
+      });
+    } catch (err: any) {
+      resolve({
+        name: spec.name, finalMessage: "", transcriptPath: null, exitCode: 1,
+        elapsedMs: Date.now() - startTime,
+        error: err?.message ?? String(err),
+      });
+      return;
+    }
+
+    // Deliver the prompt via stdin. spec.fullTask carries the identity roleBlock
+    // — Codex has no system-prompt flag, so the identity rides in the prompt body.
+    try {
+      proc.stdin!.write(spec.fullTask);
+      proc.stdin!.end();
+    } catch { /* stdin may already be closed on a failed spawn */ }
+
+    const lb = new LineBuffer();
+    let wasAborted = false;
+    let exited = false;
+    // Guard against double-resolve if both `error` and `close` fire.
+    let settled = false;
+    const settle = (r: BackendResult): void => {
+      if (settled) return;
+      settled = true;
+      resolve(r);
+    };
+    proc.on("exit", () => { exited = true; });
+
+    const processLine = (line: string) => {
+      if (!line.trim()) return;
+      rawLines.push(line);
+      let event: any;
+      try { event = JSON.parse(line); } catch { return; }
+
+      const sid = extractCodexSessionId(event);
+      if (sid) sessionId = sid;
+
+      const msgs = parseCodexEvent(event);
+      if (msgs) {
+        let sawAssistant = false;
+        for (const m of msgs) {
+          transcript.push(m);
+          if (m.role === "assistant") sawAssistant = true;
+        }
+        if (sawAssistant) {
+          usage.turns += 1;
+          hasRealUsage = true;
+          // Emit a partial on assistant events (not on every fragment).
+          emit({
+            name: spec.name,
+            finalMessage: getFinalOutput(transcript),
+            transcriptPath: null,
+            exitCode: 0,
+            elapsedMs: Date.now() - startTime,
+            sessionId,
+            ...(hasRealUsage ? { usage: { ...usage } } : {}),
+            transcript,
+          });
+        }
+      }
+
+      const u = parseCodexUsage(event);
+      if (u) {
+        // Merge token fields; preserve the runner-maintained `turns`.
+        usage.input = u.input;
+        usage.output = u.output;
+        usage.cacheRead = u.cacheRead;
+        usage.cacheWrite = u.cacheWrite;
+        usage.cost = u.cost;
+        usage.contextTokens = u.contextTokens;
+        hasRealUsage = true;
+      }
+      if (event.type === "turn.completed") sawTerminal = true;
+    };
+
+    proc.stdout!.on("data", (data: Buffer) => {
+      for (const line of lb.push(data.toString())) processLine(line);
+    });
+    proc.stderr!.on("data", (data: Buffer) => { stderr += data.toString(); });
+
+    const onAbort = () => {
+      wasAborted = true;
+      makeAbortHandler(proc, () => exited)();
+    };
+    if (abort.aborted) onAbort();
+    else abort.addEventListener("abort", onAbort, { once: true });
+
+    proc.on("error", (err: NodeJS.ErrnoException) => {
+      settle({
+        name: spec.name, finalMessage: "", transcriptPath: null, exitCode: 1,
+        elapsedMs: Date.now() - startTime,
+        error: err.code === "ENOENT"
+          ? "codex CLI not found on PATH"
+          : err.message || String(err),
+      });
+    });
+
+    proc.on("close", (code) => {
+      if (settled) return;
+      exited = true;
+      for (const line of lb.flush()) processLine(line);
+      const elapsedMs = Date.now() - startTime;
+      const exitCode = code ?? 0;
+
+      // Final message: prefer the --output-last-message file, fall back to the
+      // last assistant text in the projected transcript.
+      let finalMessage = "";
+      try { finalMessage = readFileSync(outFile, "utf8").trim(); } catch {}
+      if (!finalMessage) finalMessage = getFinalOutput(transcript);
+
+      // Archive the teed JSONL stream. Failure (EACCES, ENOSPC) degrades to
+      // transcriptPath=null rather than rejecting the close handler.
+      let transcriptPath: string | null = null;
+      try {
+        const destDir = join(homedir(), ".pi", "agent", "sessions", "codex-cli");
+        mkdirSync(destDir, { recursive: true });
+        const dest = join(destDir, `${sessionId ?? id}.jsonl`);
+        writeFileSync(dest, rawLines.join("\n"));
+        transcriptPath = dest;
+      } catch (e: any) {
+        process.stderr.write(
+          `[pi-interactive-subagent] codex transcript archive failed: ${e?.message ?? e}\n`,
+        );
+        transcriptPath = null;
+      }
+
+      // Warn if a clean stream ended without a thread.started session id; resume
+      // will be unavailable. Never fabricate an id.
+      if (exitCode === 0 && !sessionId) {
+        process.stderr.write(
+          `[pi-interactive-subagent] ${spec.name}: no thread.started session id seen — ` +
+            `resume will be unavailable (Codex JSON format may have changed)\n`,
+        );
+      }
+
+      if (wasAborted) {
+        settle({ name: spec.name, finalMessage, transcriptPath, exitCode: 1, elapsedMs,
+                  error: "aborted", sessionId, sessionKey: sessionId,
+                  ...(hasRealUsage ? { usage } : {}), transcript });
+        return;
+      }
+      if (exitCode !== 0) {
+        settle({ name: spec.name, finalMessage, transcriptPath, exitCode, elapsedMs,
+                  error: stderr.trim() || `codex exited with code ${exitCode}`,
+                  sessionId, sessionKey: sessionId,
+                  ...(hasRealUsage ? { usage } : {}), transcript });
+        return;
+      }
+      if (!sawTerminal) {
+        settle({ name: spec.name, finalMessage, transcriptPath, exitCode: 1, elapsedMs,
+                  error: "child exited without completion event",
+                  sessionId, sessionKey: sessionId,
+                  ...(hasRealUsage ? { usage } : {}), transcript });
+        return;
+      }
+      settle({ name: spec.name, finalMessage, transcriptPath, exitCode: 0, elapsedMs,
+                sessionId, sessionKey: sessionId,
+                ...(hasRealUsage ? { usage } : {}), transcript });
+    });
+  });
+}
+
 async function archiveClaudeTranscript(sessionId: string): Promise<string | null> {
   const sourceFile = await findClaudeSessionFile(sessionId, 2000);
   if (!sourceFile) {
@@ -752,7 +960,7 @@ function makeAbortedResult(
     elapsedMs: Date.now() - startTime,
     error: "aborted",
     // Include sessionKey for pi children so the caller can still route to the registry.
-    ...(spec.effectiveCli !== "claude" ? { sessionKey: spec.subagentSessionFile } : {}),
+    ...(spec.effectiveCli === "pi" ? { sessionKey: spec.subagentSessionFile } : {}),
     usage,
     transcript,
   };

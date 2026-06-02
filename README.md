@@ -1,6 +1,6 @@
 # pi-mux-subagents
 
-An interactive and headless subagent framework for [pi](https://github.com/earendil-works/pi) and Claude Code with terminal-multiplexer pane support, sync and async orchestration, and a multi-CLI design. Mux pane execution—launching each subagent into its own live terminal pane—is the framework's primary differentiator: it gives you direct observability, manual intervention, and interruption semantics that headless subprocess execution cannot match.
+An interactive and headless subagent framework for [pi](https://github.com/earendil-works/pi), Claude Code, and Codex with terminal-multiplexer pane support, sync and async orchestration, and a multi-CLI design. Mux pane execution—launching each subagent into its own live terminal pane—is the framework's primary differentiator: it gives you direct observability, manual intervention, and interruption semantics that headless subprocess execution cannot match.
 
 ## Install
 
@@ -94,9 +94,10 @@ Choose which CLI each subagent runs under with the `cli` field:
 ```json
 { "name": "pi worker",     "task": "...", "cli": "pi" }
 { "name": "claude worker", "task": "...", "cli": "claude" }
+{ "name": "codex worker",  "task": "...", "cli": "codex" }
 ```
 
-`cli: "pi"` (default) gives access to pi lifecycle tools (`subagent_done`, `caller_ping`), skills, and coordinator spawning. `cli: "claude"` runs the Claude Code CLI in headless or pane mode; it trades pi lifecycle features for Claude-native tool access. The framework is designed to support additional CLIs (codex, opencode) in the future.
+`cli: "pi"` (default) gives access to pi lifecycle tools (`subagent_done`, `caller_ping`), skills, and coordinator spawning. `cli: "claude"` runs the Claude Code CLI in headless or pane mode; it trades pi lifecycle features for Claude-native tool access. `cli: "codex"` runs the Codex CLI in headless (codex exec) or pane mode. Like Claude, it trades pi lifecycle features (skills, caller_ping/block-resume) for native Codex tooling; pi skills and tool allowlists are warned-and-ignored. Pane completion is signaled by an in-band subagent_done MCP tool injected per-launch via codex -c overrides — the user's persistent ~/.codex/config.toml is never modified. The framework is designed to support additional CLIs (opencode) in the future.
 
 ### Execution policy
 
@@ -119,16 +120,18 @@ Resolution order is **tool parameter → agent frontmatter → `guarded` default
 
 > **Migration note.** The default changed from bypass-by-default to `guarded`. Workflows that relied on Claude bypassing permissions may now see Claude refuse or pause on risky actions — destructive git operations, credential exploration, production access, or irreversible deletes. If a run is genuinely trusted and sandboxed, set `executionPolicy: "unrestricted"` (or `execution-policy: unrestricted` in agent frontmatter) to restore the previous behavior.
 
-#### Future backend mappings
+#### Backend mappings
 
-Only Claude implements `guarded` today. The policy is intentionally CLI-agnostic because the safe mode differs per backend, and the mappings below are **not** exact equivalents:
+The policy is intentionally CLI-agnostic because the safe mode differs per backend, and the mappings below are **not** exact equivalents:
 
 | Backend | `guarded` (intended) | `unrestricted` (intended) |
 | --- | --- | --- |
 | **Claude** (implemented) | `--permission-mode auto` | `--dangerously-skip-permissions` (pane) / `--permission-mode bypassPermissions` (headless) |
-| **Codex** (future) | `--sandbox workspace-write --ask-for-approval on-request`, with `approvals_reviewer=auto_review` as the closest non-interactive classifier-backed equivalent | `--dangerously-bypass-approvals-and-sandbox` (or `--sandbox danger-full-access --ask-for-approval never`) |
+| **Codex** (implemented) | `--sandbox workspace-write` + `-c approval_policy="never"` (headless) / `--sandbox workspace-write --ask-for-approval on-request` (pane) | `--dangerously-bypass-approvals-and-sandbox` |
 | **OpenCode** (future) | best-effort conservative permission profile (no true classifier-backed `auto` equivalent exists) | broadly `permission: "allow"` |
 | **pi** (current) | no guarded mode yet — runs unrestricted, subject only to tool availability and deny-tool config | unrestricted (current behavior) |
+
+Codex guarded mode is sandbox-enforced (workspace-write filesystem + approval policy) but, unlike Claude's --permission-mode auto, is not classifier-backed — there is no per-action risk classifier, only the sandbox boundary and approval policy. Codex configuration (MCP completion server, policy, model, thinking) is applied exclusively through per-launch codex -c overrides; pi-mux-subagents never writes to ~/.codex/config.toml or other persistent Codex state.
 
 For backends without an implemented guarded mode (pi today), an explicit `guarded` request emits a one-line warning and continues with current behavior rather than rejecting the launch. The implicit default does not warn.
 

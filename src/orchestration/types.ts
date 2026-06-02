@@ -13,9 +13,9 @@ export const OrchestrationTaskSchema = Type.Object({
   // Fields below mirror `SubagentParams`. Orchestration wrappers are thin
   // over `launchSubagent`, so keeping these in sync avoids silently reducing
   // the API surface relative to the bare `subagent` tool.
-  cli: Type.Optional(Type.String({ description: "'pi' (default) or 'claude'. Free-form string; unknown values fall back to the pi path." })),
+  cli: Type.Optional(Type.String({ description: "'pi' (default), 'claude', or 'codex'. Free-form string; unknown values fall back to the pi path." })),
   model: Type.Optional(Type.String()),
-  thinking: Type.Optional(Type.String({ description: "'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'. Free-form string; unknown values are dropped on Claude and pass through as a pi model suffix." })),
+  thinking: Type.Optional(Type.String({ description: "'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'. Free-form string; unknown values are dropped on Claude and Codex, and pass through as a pi model suffix. For Codex, mapped to model_reasoning_effort; unsupported values dropped." })),
   systemPrompt: Type.Optional(Type.String({ description: "Appended (or replaces, per agent frontmatter) the system prompt for this step." })),
   skills: Type.Optional(Type.String({ description: "Comma-separated skills override for this step." })),
   tools: Type.Optional(Type.String({ description: "Comma-separated tools override for this step." })),
@@ -32,7 +32,7 @@ export const OrchestrationTaskSchema = Type.Object({
   executionPolicy: Type.Optional(
     Type.String({
       description:
-        "CLI-agnostic execution policy for this step: 'guarded' (default) or 'unrestricted'. Mirrors the bare `subagent` tool; for Claude, guarded keeps the permission classifier in the loop and unrestricted restores bypass behavior.",
+        "CLI-agnostic execution policy for this step: 'guarded' (default) or 'unrestricted'. Mirrors the bare `subagent` tool; for Claude, guarded keeps the permission classifier in the loop and unrestricted restores bypass behavior. For Codex: guarded → --sandbox workspace-write with non-interactive approval_policy=never (headless) / --ask-for-approval on-request (pane); unrestricted → --dangerously-bypass-approvals-and-sandbox.",
     }),
   ),
 });

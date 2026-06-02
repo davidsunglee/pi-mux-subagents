@@ -51,7 +51,7 @@ export function makeDefaultDeps(ctx: {
       if (isHeadless) {
         const agentDefs = task.agent ? loadAgentDefaults(task.agent) : null;
         const interactive = resolveEffectiveInteractive({ ...task, name: handle.name }, agentDefs);
-        const source = task.cli === "claude" ? "claude" : "pi";
+        const source = task.cli === "claude" || task.cli === "codex" ? "claude" : "pi";
         registerHeadlessSubagent({
           id: handle.id,
           name: handle.name,

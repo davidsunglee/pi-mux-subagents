@@ -63,7 +63,7 @@ export function makePaneBackend(
       // placeholder as the resume key. The watch() onSessionKey hook late-binds
       // the real Claude session id once it is known.
       const launchSessionKey =
-        running.cli === "claude" ? undefined : running.sessionFile;
+        running.cli === "claude" || running.cli === "codex" ? undefined : running.sessionFile;
       return {
         id: running.id,
         name: running.name,
@@ -90,7 +90,7 @@ export function makePaneBackend(
         };
       }
       // Pi children: fire onSessionKey immediately (sessionFile is known at launch).
-      if (running.cli !== "claude" && running.sessionFile) {
+      if (!(running.cli === "claude" || running.cli === "codex") && running.sessionFile) {
         try { hooks?.onSessionKey?.(running.sessionFile); } catch { /* defensive */ }
       }
       const abort = new AbortController();
@@ -110,7 +110,7 @@ export function makePaneBackend(
           onUpdate: (partial) => {
             if (!onUpdate) return;
             const partialSessionKey =
-              running.cli === "claude"
+              running.cli === "claude" || running.cli === "codex"
                 ? partial.claudeSessionId
                 : running.sessionFile;
             onUpdate({
@@ -131,7 +131,7 @@ export function makePaneBackend(
         // For Claude, the resume-addressable key is the Claude session id;
         // the pi `running.sessionFile` placeholder is irrelevant.
         const watchSessionKey =
-          running.cli === "claude"
+          running.cli === "claude" || running.cli === "codex"
             ? sub.claudeSessionId
             : running.sessionFile;
         return {

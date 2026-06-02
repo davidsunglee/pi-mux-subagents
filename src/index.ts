@@ -46,6 +46,8 @@ import { makeHeadlessBackend } from "./backends/headless.ts";
 import { computePiTailResumeOffset, projectPiMessageToTranscript, tailPiSessionEntries } from "./backends/pi-projection.ts";
 import { tailJsonlLines, type JsonlTailState } from "./backends/jsonl-tail.ts";
 import { parseClaudeStreamEvent, parseClaudeResult } from "./backends/claude-stream.ts";
+import { buildCodexPaneCmdParts } from "./backends/codex-stream.ts";
+import { buildCodexMcpOverrideArgs } from "./backends/codex-mcp.ts";
 import { PI_TO_CLAUDE_TOOLS } from "./backends/tool-map.ts";
 import type { UsageStats, TranscriptMessage } from "./backends/types.ts";
 import { renderRichSubagentResult, toTaskRows } from "./ui/headless-render.ts";
@@ -72,6 +74,7 @@ import {
   getArtifactDir,
   getAgentConfigDir,
   buildPiPromptArgs,
+  buildClaudeCompletionAddendum,
 } from "./launch/launch-spec.ts";
 import {
   createStatusState,
@@ -586,7 +589,7 @@ function renderSubagentWidgetLines(agents: RunningSubagent[], width: number): st
     } else if (statusConfig.enabled && agent.statusState) {
       const snapshot = classifyStatus(agent.statusState, Date.now());
       right = formatWidgetRightLabel(snapshot);
-    } else if (agent.cli === "claude") {
+    } else if (agent.cli === "claude" || agent.cli === "codex") {
       right = " running… ";
     } else {
       right = " starting… ";
@@ -691,7 +694,7 @@ function activityLabel(activity: SubagentActivityState): string | undefined {
 export function observeRunningSubagent(running: RunningSubagent, observedAt = Date.now()) {
   if (!running.statusState) return;
   if (running.blocked) return; // synthetic blocked virtual row; never read activity
-  if (running.cli === "claude") return; // claude has no activity file
+  if (running.cli === "claude" || running.cli === "codex") return; // claude/codex have no activity file
 
   const file = running.activityFile;
   const read: ActivityReadResult = file
@@ -763,8 +766,8 @@ function handleSubagentInterrupt(
   }
   const running = resolved.running;
 
-  if (running.cli === "claude") {
-    const text = "Turn-only Escape interrupt is currently supported only for pane-Pi subagents. Claude-backed semantics have not been verified yet.";
+  if (running.cli === "claude" || running.cli === "codex") {
+    const text = "Turn-only Escape interrupt is currently supported only for pane-Pi subagents. Claude/Codex-backed semantics have not been verified yet.";
     return { content: [{ type: "text" as const, text }], details: { error: "claude interrupt unsupported", id: running.id, name: running.name } };
   }
   if (running.backend !== "pane") {
@@ -952,9 +955,24 @@ export function warnClaudeSkillsDropped(
   );
 }
 
+export function warnCodexUnsupportedFeatures(
+  subagentName: string,
+  effectiveSkills: string | undefined,
+  effectiveTools: string | undefined,
+): void {
+  if (effectiveSkills && effectiveSkills.trim() !== "")
+    process.stderr.write(`[pi-interactive-subagent] ${subagentName}: ignoring skills=${effectiveSkills} on Codex path — not supported in v1\n`);
+  if (effectiveTools && effectiveTools.trim() !== "")
+    process.stderr.write(`[pi-interactive-subagent] ${subagentName}: ignoring tools=${effectiveTools} on Codex path — pi tool allowlists are not applied (the internal subagent_done MCP tool is always available)\n`);
+}
+
 // Re-export shellEscape so tests can verify exact argv encoding against the
 // same helper buildClaudeCmdParts uses — avoids drift if one side changes.
 export { shellEscape };
+
+// Re-export buildCodexPaneCmdParts for symmetry with buildClaudeCmdParts so
+// pane-command tests can assert argv via the same public surface.
+export { buildCodexPaneCmdParts };
 
 /**
  * Sanitize an agent/name string for safe filesystem use in launch-script names.
@@ -1087,6 +1105,41 @@ export async function launchSubagent(
 
     runningSubagents.set(id, running);
     startWidgetRefresh();   // idempotent via widgetInterval guard
+    if (piForRegistry) startStatusRefresh(piForRegistry);
+    return running;
+  }
+
+  // ── Codex CLI path ──
+  if (spec.effectiveCli === "codex") {
+    const sentinelFile = `/tmp/pi-codex-${id}-done`;
+    warnCodexUnsupportedFeatures(params.name, spec.effectiveSkills, spec.effectiveTools);
+    const addendum = buildClaudeCompletionAddendum(spec.autoExit); // CLI-neutral text ("call subagent_done")
+    const promptBody = `${spec.fullTask}\n\n${addendum}`;            // identity is already in spec.fullTask
+    const mcpOverrideArgs = buildCodexMcpOverrideArgs({ sentinelFile });
+    const cmdParts = buildCodexPaneCmdParts({
+      model: spec.codexModelArg,
+      effectiveThinking: spec.effectiveThinking,
+      executionPolicy: spec.effectiveExecutionPolicy,
+      mcpOverrideArgs,
+      task: promptBody,
+    });
+    const cdPrefix = buildPaneCdPrefix(spec.effectiveCwd, ctx.cwd);
+    const command = `${cdPrefix}${cmdParts.join(" ")}; echo '__SUBAGENT_DONE_'$?'__'`;
+    lastLaunchCommand = command;
+    const launchScriptName = `${safeScriptName(params.name, "subagent")}-${id}.sh`;
+    const launchScriptFile = join(spec.artifactDir, "subagent-scripts", launchScriptName);
+    if (surfaceOverrides?.sendLongCommand) surfaceOverrides.sendLongCommand(surface, command);
+    else sendLongCommand(surface, command, { scriptPath: launchScriptFile, scriptPreamble: [
+      `# Codex subagent launch script for ${params.name}`, `# Generated: ${new Date().toISOString()}`, `# Surface: ${surface}`,
+    ].join("\n") });
+    const running: RunningSubagent = {
+      id, name: params.name, task: params.task, agent: params.agent, backend: "pane",
+      surface, startTime, sessionFile: spec.subagentSessionFile, launchScriptFile,
+      cli: "codex", sentinelFile, interactive: spec.effectiveInteractive,
+      statusState: createStatusState({ source: "claude", startTimeMs: startTime }), // codex shares claude (no activity file) status semantics
+    };
+    runningSubagents.set(id, running);
+    startWidgetRefresh();
     if (piForRegistry) startStatusRefresh(piForRegistry);
     return running;
   }
@@ -1366,7 +1419,7 @@ export async function watchSubagent(
   if (
     opts?.tailStartLine &&
     opts.tailStartLine > 0 &&
-    running.cli !== "claude" &&
+    !(running.cli === "claude" || running.cli === "codex") &&
     sessionFile
   ) {
     try {
@@ -1380,7 +1433,9 @@ export async function watchSubagent(
   }
 
   // Pi children: fire immediately (session file known at launch time).
-  if (running.cli !== "claude") maybeFire(running.sessionFile);
+  // Pi covers both an explicit cli="pi" and the default unset cli; only the
+  // process-spawn CLIs (claude/codex) late-bind their session key.
+  if (!(running.cli === "claude" || running.cli === "codex")) maybeFire(running.sessionFile);
 
   // Shared per-tick + final-drain body for pi tailing. Using one helper keeps
   // the final drain (after pollForExit returns) from drifting away from the
@@ -1436,9 +1491,9 @@ export async function watchSubagent(
       sessionFile,
       sentinelFile: running.sentinelFile,
       onTick() {
-        if (running.cli !== "claude") {
+        if (!(running.cli === "claude" || running.cli === "codex")) {
           drainPiTail();
-        } else {
+        } else if (running.cli === "claude") {
           // Claude: attempt early session key resolution on each tick.
           maybeFire(readClaudeSessionId());
           try {
@@ -1501,7 +1556,7 @@ export async function watchSubagent(
     // would otherwise return with empty transcript/usage. Replay the same
     // per-tick body once more so the resolved BackendResult always reflects
     // the final session state.
-    if (running.cli !== "claude") {
+    if (!(running.cli === "claude" || running.cli === "codex")) {
       drainPiTail();
     }
 
@@ -1658,6 +1713,21 @@ export async function watchSubagent(
         usage: { ...usage },
         ...(sessionId ? { claudeSessionId: sessionId } : {}),
       };
+    }
+
+    if (running.cli === "codex") {
+      // Codex pane completion: the MCP subagent_done tool wrote the summary to the
+      // sentinel file (detected by pollForExit's sentinelFile option). Transcript /
+      // sessionId are best-effort and omitted in v1 (resume is headless-only).
+      let summary = "";
+      if (running.sentinelFile) { try { summary = readFileSync(running.sentinelFile, "utf-8").trim(); } catch {} }
+      if (!summary) summary = readScreen(surface, 200).replace(/__SUBAGENT_DONE_\d+__/, "").trimEnd();
+      if (!summary) summary = result.exitCode !== 0 ? `Codex exited with code ${result.exitCode}` : "Codex exited without output";
+      if (running.sentinelFile) { try { unlinkSync(running.sentinelFile); } catch {} }
+      closeSurface(surface);
+      runningSubagents.delete(running.id);
+      return { name, task, summary, exitCode: result.exitCode, elapsed, transcriptPath: null,
+               transcript: [...transcript], usage: { ...usage } };
     }
 
     // Pi subagent result extraction (existing, unchanged)

@@ -40,13 +40,13 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             content: [{ type: "text", text: `Unknown tool: ${req.params.name}` }],
         };
     }
-    const sentinel = process.env.PI_CLAUDE_SENTINEL;
+    const sentinel = process.env.PI_SUBAGENT_DONE_SENTINEL ?? process.env.PI_CLAUDE_SENTINEL;
     if (!sentinel) {
         return {
             isError: true,
             content: [{
                     type: "text",
-                    text: "PI_CLAUDE_SENTINEL is not set — subagent_done is only valid in pi-spawned Claude sessions.",
+                    text: "Neither sentinel env var is set: PI_SUBAGENT_DONE_SENTINEL is unset and PI_CLAUDE_SENTINEL is not set — subagent_done is only valid in pi-spawned Claude/Codex sessions.",
                 }],
         };
     }

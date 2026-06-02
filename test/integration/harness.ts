@@ -69,8 +69,17 @@ export const EXTENSION_SOURCE = join(PROJECT_ROOT, "src", "index.ts");
 
 // ── Configuration ──
 
-/** Model used for integration tests. Override with PI_TEST_MODEL env var. */
-export const TEST_MODEL = process.env.PI_TEST_MODEL ?? "anthropic/claude-haiku-4-5";
+const PER_CLI_DEFAULT_MODEL: Record<string, string> = {
+  pi: "anthropic/claude-haiku-4-5",   // unchanged: matches the current TEST_MODEL default
+  claude: "claude-haiku-4-5",
+  codex: "gpt-5.4-mini",              // Codex-specific default added by this change
+};
+/** Per-CLI default test model. A set PI_TEST_MODEL overrides globally regardless of cli. */
+export function getTestModel(cli: "pi" | "claude" | "codex" = "pi"): string {
+  return process.env.PI_TEST_MODEL ?? PER_CLI_DEFAULT_MODEL[cli] ?? PER_CLI_DEFAULT_MODEL.pi;
+}
+/** @deprecated use getTestModel(cli); retained for existing call sites (pi default). */
+export const TEST_MODEL = getTestModel("pi");
 
 /** Per-test timeout in ms. Override with PI_TEST_TIMEOUT env var. */
 export const PI_TIMEOUT = Number(process.env.PI_TEST_TIMEOUT ?? "120000");
@@ -226,7 +235,7 @@ export function buildPiCommand(
   task: string,
   opts?: { model?: string; extraArgs?: string },
 ): string {
-  const model = opts?.model ?? TEST_MODEL;
+  const model = opts?.model ?? getTestModel("pi");
   const extra = opts?.extraArgs ?? "";
 
   // Force pi to load the working-tree extension (not an installed pi-package
