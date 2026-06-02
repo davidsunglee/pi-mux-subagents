@@ -56,7 +56,9 @@ import {
   type AgentDefaults,
   type ResolvedLaunchSpec,
   type SubagentSessionMode,
+  type ExecutionPolicy,
   resolveLaunchSpec,
+  warnGuardedPolicyUnsupported,
   resolveEffectiveInteractive,
   resolvePiToolsArg,
   writeSystemPromptArtifact,
@@ -97,6 +99,7 @@ import {
 export {
   SubagentParams,
   resolveLaunchSpec,
+  warnGuardedPolicyUnsupported,
   resolveEffectiveInteractive,
   loadAgentDefaults,
   resolveSubagentPaths,
@@ -115,6 +118,7 @@ export type {
   AgentDefaults,
   ResolvedLaunchSpec,
   SubagentSessionMode,
+  ExecutionPolicy,
 };
 
 type ResumeToolParams = {
@@ -850,6 +854,12 @@ interface ClaudeCmdInputs {
   resumeSessionId: string | undefined;
   effectiveThinking: string | undefined;
   effectiveTools?: string;
+  /**
+   * CLI-agnostic execution policy. Defaults to `guarded` when omitted, which
+   * maps to `--permission-mode auto`. `unrestricted` restores the legacy
+   * `--dangerously-skip-permissions` bypass for trusted/sandboxed runs.
+   */
+  executionPolicy?: ExecutionPolicy;
   task: string;
 }
 
@@ -871,7 +881,17 @@ export function buildClaudeCmdParts(input: ClaudeCmdInputs): string[] {
   // input at the dialog.
   parts.push("CLAUDE_CODE_SANDBOXED=1");
   parts.push("claude");
-  parts.push("--dangerously-skip-permissions");
+  // Execution policy → Claude permission handling. Guarded (the default) keeps
+  // Claude's permission classifier engaged via `--permission-mode auto`;
+  // unrestricted restores the legacy `--dangerously-skip-permissions` bypass
+  // for trusted/sandboxed runs. CLAUDE_CODE_SANDBOXED above bypasses the
+  // interactive trust dialog only — it does not bypass tool permissions, so it
+  // applies to both policies.
+  if (input.executionPolicy === "unrestricted") {
+    parts.push("--dangerously-skip-permissions");
+  } else {
+    parts.push("--permission-mode", "auto");
+  }
   if (input.pluginDir) {
     parts.push("--plugin-dir", shellEscape(input.pluginDir));
   }
@@ -985,6 +1005,7 @@ export async function launchSubagent(
   if (!sessionFile) throw new Error("No session file");
 
   const spec = resolveLaunchSpec(params, ctx);
+  warnGuardedPolicyUnsupported(spec);
 
   // Use pre-created surface (parallel mode) or create a new one.
   // For new surfaces, pause briefly so the shell is ready before sending the command.
@@ -1026,6 +1047,7 @@ export async function launchSubagent(
       resumeSessionId: spec.resumeSessionId,
       effectiveThinking: spec.effectiveThinking,
       effectiveTools: spec.effectiveTools,
+      executionPolicy: spec.effectiveExecutionPolicy,
       // Claude CLI prompt does not support @file substitution. We hand it the
       // naked task body (roleBlock stripped — identity arrives via the flag).
       task: spec.claudeTaskBody,

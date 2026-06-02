@@ -98,6 +98,40 @@ Choose which CLI each subagent runs under with the `cli` field:
 
 `cli: "pi"` (default) gives access to pi lifecycle tools (`subagent_done`, `caller_ping`), skills, and coordinator spawning. `cli: "claude"` runs the Claude Code CLI in headless or pane mode; it trades pi lifecycle features for Claude-native tool access. The framework is designed to support additional CLIs (codex, opencode) in the future.
 
+### Execution policy
+
+`executionPolicy` (tool parameter) / `execution-policy` (agent frontmatter) is a CLI-agnostic control over how much autonomy a subagent's backend is granted. It takes two values:
+
+```json
+{ "name": "worker", "task": "...", "cli": "claude", "executionPolicy": "guarded" }
+{ "name": "worker", "task": "...", "cli": "claude", "executionPolicy": "unrestricted" }
+```
+
+```yaml
+# agent frontmatter
+execution-policy: guarded
+```
+
+- **`guarded` (default)** prefers the backend's safest practical autonomous mode. For Claude this maps to `--permission-mode auto`, which keeps Claude's permission classifier in the loop for risky actions instead of bypassing it.
+- **`unrestricted`** explicitly opts into bypass/full-access behavior for trusted, sandboxed, or otherwise controlled runs. For Claude this restores the legacy bypass path: `--dangerously-skip-permissions` for pane launches and `--permission-mode bypassPermissions` for headless launches.
+
+Resolution order is **tool parameter → agent frontmatter → `guarded` default**. The same `executionPolicy` option is exposed on the bare `subagent` tool and on `subagent_run_serial` / `subagent_run_parallel` steps, so direct and orchestrated launches behave identically. Pane launches still export `CLAUDE_CODE_SANDBOXED=1`; that only bypasses Claude's interactive workspace-trust dialog and does **not** bypass tool permissions, so it applies under both policies.
+
+> **Migration note.** The default changed from bypass-by-default to `guarded`. Workflows that relied on Claude bypassing permissions may now see Claude refuse or pause on risky actions — destructive git operations, credential exploration, production access, or irreversible deletes. If a run is genuinely trusted and sandboxed, set `executionPolicy: "unrestricted"` (or `execution-policy: unrestricted` in agent frontmatter) to restore the previous behavior.
+
+#### Future backend mappings
+
+Only Claude implements `guarded` today. The policy is intentionally CLI-agnostic because the safe mode differs per backend, and the mappings below are **not** exact equivalents:
+
+| Backend | `guarded` (intended) | `unrestricted` (intended) |
+| --- | --- | --- |
+| **Claude** (implemented) | `--permission-mode auto` | `--dangerously-skip-permissions` (pane) / `--permission-mode bypassPermissions` (headless) |
+| **Codex** (future) | `--sandbox workspace-write --ask-for-approval on-request`, with `approvals_reviewer=auto_review` as the closest non-interactive classifier-backed equivalent | `--dangerously-bypass-approvals-and-sandbox` (or `--sandbox danger-full-access --ask-for-approval never`) |
+| **OpenCode** (future) | best-effort conservative permission profile (no true classifier-backed `auto` equivalent exists) | broadly `permission: "allow"` |
+| **pi** (current) | no guarded mode yet — runs unrestricted, subject only to tool availability and deny-tool config | unrestricted (current behavior) |
+
+For backends without an implemented guarded mode (pi today), an explicit `guarded` request emits a one-line warning and continues with current behavior rather than rejecting the launch. The implicit default does not warn.
+
 ### Headless vs mux
 
 Control the execution backend with the `PI_SUBAGENT_MODE` environment variable:

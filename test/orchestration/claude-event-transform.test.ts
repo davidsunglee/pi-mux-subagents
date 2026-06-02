@@ -167,6 +167,22 @@ describe("buildClaudeHeadlessArgs", () => {
     resumeSessionId: undefined, focus: undefined, agentDefs: null,
   };
 
+  it("defaults headless Claude launches to guarded permission mode", () => {
+    const args = buildClaudeHeadlessArgs(baseSpec, "do");
+    const idx = args.indexOf("--permission-mode");
+    assert.notEqual(idx, -1, `--permission-mode must be in args: ${args.join(" ")}`);
+    assert.equal(args[idx + 1], "auto");
+    assert.equal(args.includes("bypassPermissions"), false,
+      "guarded headless Claude launches must not bypass permissions by default");
+  });
+
+  it("maps unrestricted headless Claude launches to bypassPermissions", () => {
+    const args = buildClaudeHeadlessArgs({ ...baseSpec, effectiveExecutionPolicy: "unrestricted" }, "do");
+    const idx = args.indexOf("--permission-mode");
+    assert.notEqual(idx, -1, `--permission-mode must be in args: ${args.join(" ")}`);
+    assert.equal(args[idx + 1], "bypassPermissions");
+  });
+
   it("emits --resume <id> when spec.resumeSessionId is set (review finding 4)", () => {
     const args = buildClaudeHeadlessArgs({ ...baseSpec, resumeSessionId: "abc-123" }, "do");
     const idx = args.indexOf("--resume");

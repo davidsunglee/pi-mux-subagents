@@ -66,6 +66,12 @@ export interface BackendLaunchParams {
    * to suppress stalled/recovered status steer messages.
    */
   interactive?: boolean;
+  /**
+   * CLI-agnostic execution policy: `guarded` (default) or `unrestricted`.
+   * Carried structurally; launch resolution maps it onto the backend's safety
+   * controls (for Claude, the permission mode / bypass flags).
+   */
+  executionPolicy?: string;
 }
 
 export interface Backend {

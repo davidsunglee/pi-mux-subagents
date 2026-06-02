@@ -11,11 +11,16 @@ export function buildClaudeHeadlessArgs(
   spec: ResolvedLaunchSpec,
   taskText: string,
 ): string[] {
+  // Execution policy → Claude permission mode. Guarded (the default) keeps the
+  // permission classifier in the loop via `auto`; unrestricted restores the
+  // legacy `bypassPermissions` escape hatch for trusted/sandboxed runs.
+  const permissionMode =
+    spec.effectiveExecutionPolicy === "unrestricted" ? "bypassPermissions" : "auto";
   const args: string[] = [
     "-p",
     "--output-format", "stream-json",
     "--verbose",
-    "--permission-mode", "bypassPermissions",
+    "--permission-mode", permissionMode,
   ];
   if (spec.claudeModelArg) {
     args.push("--model", spec.claudeModelArg);

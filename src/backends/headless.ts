@@ -8,6 +8,7 @@ import { LineBuffer } from "./line-buffer.ts";
 import {
   resolveLaunchSpec,
   resolvePiToolsArg,
+  warnGuardedPolicyUnsupported,
   writeSystemPromptArtifact,
   writeTaskArtifact,
   type ResolvedLaunchSpec,
@@ -196,9 +197,11 @@ export function makeHeadlessBackend(ctx: {
           resumeSessionId: params.resumeSessionId,
           cli: params.cli,
           focus: params.focus,
+          executionPolicy: params.executionPolicy,
         },
         ctx,
       );
+      warnGuardedPolicyUnsupported(spec);
 
       const entry: HeadlessLaunch = {
         id,

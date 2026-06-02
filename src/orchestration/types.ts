@@ -29,8 +29,12 @@ export const OrchestrationTaskSchema = Type.Object({
         "When true, suppress stall/recovered status steer messages for this orchestration step (the main session is not woken by transitions). Defaults follow the agent frontmatter / auto-exit chain.",
     }),
   ),
-  // Note: `permissionMode` is intentionally omitted — `launchSubagent()` does not
-  // accept it. Add it here only when plumbing all the way through.
+  executionPolicy: Type.Optional(
+    Type.String({
+      description:
+        "CLI-agnostic execution policy for this step: 'guarded' (default) or 'unrestricted'. Mirrors the bare `subagent` tool; for Claude, guarded keeps the permission classifier in the loop and unrestricted restores bypass behavior.",
+    }),
+  ),
 });
 
 export type OrchestrationTask = Static<typeof OrchestrationTaskSchema>;

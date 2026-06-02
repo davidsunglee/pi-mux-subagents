@@ -54,6 +54,7 @@ export function makePaneBackend(
           resumeSessionId: params.resumeSessionId,
           cli: params.cli,
           focus: resolvedFocus,
+          executionPolicy: params.executionPolicy,
         },
         ctx,
       );

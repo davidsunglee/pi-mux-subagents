@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   loadAgentDefaults,
   resolveLaunchSpec,
+  warnGuardedPolicyUnsupported,
   writeSystemPromptArtifact,
 } from "../../src/launch/launch-spec.ts";
 
@@ -54,6 +55,81 @@ describe("resolveLaunchSpec", () => {
       baseCtx,
     );
     assert.equal(bare.claudeModelArg, "claude-sonnet-4-6");
+  });
+
+  it("defaults execution policy to guarded", () => {
+    const spec = resolveLaunchSpec(
+      { name: "PolicyDefault", task: "do", cli: "claude" },
+      baseCtx,
+    );
+    assert.equal(spec.effectiveExecutionPolicy, "guarded");
+    assert.equal(spec.executionPolicySource, "default");
+  });
+
+  it("loads execution-policy frontmatter and lets params override it", () => {
+    const root = mkdtempSync(join(tmpdir(), "ls-exec-policy-"));
+    try {
+      mkdirSync(join(root, ".pi", "agents"), { recursive: true });
+      writeFileSync(
+        join(root, ".pi", "agents", "policy-agent.md"),
+        "---\ncli: claude\nexecution-policy: unrestricted\n---\npolicy body\n",
+        "utf8",
+      );
+
+      const fromAgent = resolveLaunchSpec(
+        { name: "PolicyAgent", task: "do", agent: "policy-agent", cwd: root },
+        baseCtx,
+      );
+      assert.equal(fromAgent.effectiveExecutionPolicy, "unrestricted");
+      assert.equal(fromAgent.executionPolicySource, "agent");
+
+      const fromParams = resolveLaunchSpec(
+        {
+          name: "PolicyOverride",
+          task: "do",
+          agent: "policy-agent",
+          cwd: root,
+          executionPolicy: "guarded",
+        },
+        baseCtx,
+      );
+      assert.equal(fromParams.effectiveExecutionPolicy, "guarded");
+      assert.equal(fromParams.executionPolicySource, "params");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("warns when guarded is explicitly requested for a non-Claude backend", () => {
+    const warnings: string[] = [];
+    warnGuardedPolicyUnsupported(
+      { name: "PiWorker", effectiveCli: "pi", effectiveExecutionPolicy: "guarded", executionPolicySource: "params" },
+      (m) => warnings.push(m),
+    );
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /execution-policy=guarded requested/);
+    assert.match(warnings[0], /'pi' backend has no guarded mode/);
+  });
+
+  it("does not warn for the implicit guarded default, unrestricted, or Claude", () => {
+    const warnings: string[] = [];
+    const push = (m: string) => warnings.push(m);
+    // implicit default → no nag on routine pi launches
+    warnGuardedPolicyUnsupported(
+      { name: "A", effectiveCli: "pi", effectiveExecutionPolicy: "guarded", executionPolicySource: "default" },
+      push,
+    );
+    // unrestricted is honored by pi today → nothing to warn about
+    warnGuardedPolicyUnsupported(
+      { name: "B", effectiveCli: "pi", effectiveExecutionPolicy: "unrestricted", executionPolicySource: "params" },
+      push,
+    );
+    // Claude implements guarded → no warning
+    warnGuardedPolicyUnsupported(
+      { name: "C", effectiveCli: "claude", effectiveExecutionPolicy: "guarded", executionPolicySource: "params" },
+      push,
+    );
+    assert.deepEqual(warnings, []);
   });
 
   it("loads agent defaults and lets params override them", () => {

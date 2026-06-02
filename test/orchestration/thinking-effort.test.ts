@@ -33,6 +33,42 @@ describe("thinkingToEffort", () => {
 });
 
 describe("buildClaudeCmdParts", () => {
+  it("defaults pane Claude launches to guarded permission mode", () => {
+    const parts = buildClaudeCmdParts({
+      sentinelFile: "/tmp/s",
+      pluginDir: undefined,
+      model: "sonnet-4-6",
+      identity: undefined,
+      systemPromptMode: undefined,
+      resumeSessionId: undefined,
+      effectiveThinking: undefined,
+      task: "do things",
+    });
+    const idx = parts.indexOf("--permission-mode");
+    assert.notEqual(idx, -1, "pane Claude should pass an explicit guarded permission mode by default");
+    assert.equal(parts[idx + 1], "auto");
+    assert.equal(parts.includes("--dangerously-skip-permissions"), false,
+      "guarded pane Claude launches must not bypass permissions by default");
+  });
+
+  it("maps unrestricted pane Claude launches to the legacy bypass flag", () => {
+    const parts = buildClaudeCmdParts({
+      sentinelFile: "/tmp/s",
+      pluginDir: undefined,
+      model: "sonnet-4-6",
+      identity: undefined,
+      systemPromptMode: undefined,
+      resumeSessionId: undefined,
+      effectiveThinking: undefined,
+      executionPolicy: "unrestricted",
+      task: "do things",
+    });
+    assert.equal(parts.includes("--dangerously-skip-permissions"), true,
+      "unrestricted pane Claude launches should preserve the existing bypass escape hatch");
+    assert.equal(parts.includes("--permission-mode"), false,
+      "unrestricted pane Claude launches should not also pass the guarded permission-mode flag");
+  });
+
   it("includes --effort when thinking is set", () => {
     const parts = buildClaudeCmdParts({
       sentinelFile: "/tmp/s",

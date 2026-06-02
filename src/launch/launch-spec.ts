@@ -20,6 +20,34 @@ import { homedir } from "node:os";
 
 export type SubagentSessionMode = "standalone" | "lineage-only" | "fork";
 
+/**
+ * CLI-agnostic execution policy for subagent launches.
+ *
+ * - `guarded`: prefer the backend's safest practical autonomous mode. For
+ *   Claude this maps to `--permission-mode auto`, keeping the permission
+ *   classifier in the loop for risky actions.
+ * - `unrestricted`: explicitly opt into bypass/full-access behavior for
+ *   trusted, sandboxed, or otherwise controlled runs. For Claude this restores
+ *   the legacy bypass path (`--dangerously-skip-permissions` for panes,
+ *   `--permission-mode bypassPermissions` for headless).
+ *
+ * The policy is intentionally not modeled as a Claude-specific permission-mode
+ * setting: future backends (Codex, OpenCode, pi) map the same two values onto
+ * their own safety controls. See README "Execution policy" for the future
+ * backend mapping table.
+ */
+export type ExecutionPolicy = "guarded" | "unrestricted";
+
+/** Resolved policy plus which input it came from, for diagnostics/tests. */
+export type ExecutionPolicySource = "default" | "agent" | "params";
+
+export const DEFAULT_EXECUTION_POLICY: ExecutionPolicy = "guarded";
+
+function parseExecutionPolicy(value: string | undefined): ExecutionPolicy | undefined {
+  if (value === "guarded" || value === "unrestricted") return value;
+  return undefined;
+}
+
 export interface AgentDefaults {
   model?: string;
   tools?: string;
@@ -35,6 +63,7 @@ export interface AgentDefaults {
   cli?: string;
   body?: string;
   disableModelInvocation?: boolean;
+  executionPolicy?: ExecutionPolicy;
 }
 
 // Re-declared here (rather than imported from index.ts) so launch-spec.ts has
@@ -101,6 +130,12 @@ export const SubagentParams = Type.Object({
         "Mark the subagent as interactive (long-running, user drives the conversation in its own pane). When true, the main session is not woken by status transitions (stalled/recovered) for this subagent. If omitted, falls back to the agent's `interactive` frontmatter, otherwise the inverse of `auto-exit` (agents that auto-exit are autonomous and get stall pings; agents that don't are interactive and stay quiet).",
     }),
   ),
+  executionPolicy: Type.Optional(
+    Type.String({
+      description:
+        "CLI-agnostic execution policy. 'guarded' (default) prefers the backend's safest practical autonomous mode; for Claude this is --permission-mode auto, keeping the permission classifier in the loop. 'unrestricted' opts into bypass/full-access behavior for trusted, sandboxed runs; for Claude this restores --dangerously-skip-permissions (pane) / --permission-mode bypassPermissions (headless). Overrides agent frontmatter `execution-policy`.",
+    }),
+  ),
 });
 
 export type SubagentParamsType = Static<typeof SubagentParams>;
@@ -152,6 +187,11 @@ export interface ResolvedLaunchSpec {
   denySet: Set<string>;
   resumeSessionId: string | undefined;
   focus: boolean | undefined;
+
+  /** Resolved CLI-agnostic execution policy. Defaults to `guarded`. */
+  effectiveExecutionPolicy: ExecutionPolicy;
+  /** Which input produced `effectiveExecutionPolicy` (for diagnostics/tests). */
+  executionPolicySource: ExecutionPolicySource;
 
   agentDefs: AgentDefaults | null;
 }
@@ -254,6 +294,7 @@ function parseAgentDefaultsFromContent(content: string): AgentDefaults | null {
     sessionMode: parseSessionMode(getFrontmatterValue(frontmatter, "session-mode")),
     cwd: getFrontmatterValue(frontmatter, "cwd"),
     cli: getFrontmatterValue(frontmatter, "cli"),
+    executionPolicy: parseExecutionPolicy(getFrontmatterValue(frontmatter, "execution-policy")),
     body: body || undefined,
     disableModelInvocation:
       getFrontmatterValue(frontmatter, "disable-model-invocation")?.toLowerCase() === "true",
@@ -562,6 +603,19 @@ export function resolveLaunchSpec(
   const effectiveCli = params.cli ?? agentDefs?.cli ?? "pi";
   const claudeModelArg = projectModelForClaude(effectiveModel);
 
+  // Execution policy: params override agent frontmatter override the safe
+  // default. `executionPolicySource` records which input won so callers/tests
+  // can reason about default vs explicit requests.
+  const paramsPolicy = parseExecutionPolicy(params.executionPolicy);
+  const agentPolicy = agentDefs?.executionPolicy;
+  const effectiveExecutionPolicy: ExecutionPolicy =
+    paramsPolicy ?? agentPolicy ?? DEFAULT_EXECUTION_POLICY;
+  const executionPolicySource: ExecutionPolicySource = paramsPolicy
+    ? "params"
+    : agentPolicy
+      ? "agent"
+      : "default";
+
   const sessionId = ctx.sessionManager.getSessionId();
   const sessionDirBase = ctx.sessionManager.getSessionDir();
   const artifactDir = getArtifactDir(sessionDirBase, sessionId);
@@ -676,8 +730,36 @@ export function resolveLaunchSpec(
     resumeSessionId: params.resumeSessionId,
     focus: params.focus,
 
+    effectiveExecutionPolicy,
+    executionPolicySource,
+
     agentDefs,
   };
+}
+
+/**
+ * Warn (once per launch) when a guarded execution policy is requested for a
+ * backend that has no implemented guarded mode. Only Claude implements guarded
+ * execution today; pi (and future OpenCode) currently run unrestricted. We warn
+ * and continue with documented current behavior rather than rejecting the
+ * launch.
+ *
+ * The warning fires only when guarded was *explicitly* requested (agent
+ * frontmatter or params), never for the implicit `guarded` default, so routine
+ * pi launches stay quiet.
+ */
+export function warnGuardedPolicyUnsupported(
+  spec: Pick<ResolvedLaunchSpec, "effectiveCli" | "effectiveExecutionPolicy" | "executionPolicySource" | "name">,
+  write: (msg: string) => void = (m) => void process.stderr.write(m),
+): void {
+  if (spec.effectiveCli === "claude") return;
+  if (spec.effectiveExecutionPolicy !== "guarded") return;
+  if (spec.executionPolicySource === "default") return;
+  write(
+    `[pi-interactive-subagent] ${spec.name}: execution-policy=guarded requested but ` +
+      `the '${spec.effectiveCli}' backend has no guarded mode — running with current ` +
+      `(unrestricted) behavior.\n`,
+  );
 }
 
 // ── Artifact-write helpers (side-effectful) ────────────────────────────────
