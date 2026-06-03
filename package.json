@@ -50,11 +50,11 @@
     "@earendil-works/pi-coding-agent": "0.78.0",
     "@earendil-works/pi-tui": "0.78.0",
     "@eslint/js": "^10.0.1",
-    "@types/node": "^25.6.0",
-    "esbuild": "^0.25.0",
-    "eslint": "^10.2.1",
-    "typebox": "^1.1.34",
+    "@types/node": "^25.9.1",
+    "esbuild": "^0.25.12",
+    "eslint": "^10.4.1",
+    "typebox": "^1.1.39",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.59.1"
+    "typescript-eslint": "^8.60.1"
   }
 }
