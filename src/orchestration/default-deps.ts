@@ -51,13 +51,16 @@ export function makeDefaultDeps(ctx: {
       if (isHeadless) {
         const agentDefs = task.agent ? loadAgentDefaults(task.agent) : null;
         const interactive = resolveEffectiveInteractive({ ...task, name: handle.name }, agentDefs);
-        const source = task.cli === "claude" || task.cli === "codex" ? "claude" : "pi";
+        // Mirror backend.launch()'s CLI resolution: explicit task param wins,
+        // then agent frontmatter `cli`, else pi (unknown values fall back to pi).
+        const effectiveCli = task.cli ?? agentDefs?.cli ?? "pi";
+        const source = effectiveCli === "claude" || effectiveCli === "codex" ? "claude" : "pi";
         registerHeadlessSubagent({
           id: handle.id,
           name: handle.name,
           task: task.task,
           agent: task.agent,
-          cli: task.cli,
+          cli: effectiveCli,
           startTime: handle.startTime,
           activityFile: handle.activityFile,
           interactive,

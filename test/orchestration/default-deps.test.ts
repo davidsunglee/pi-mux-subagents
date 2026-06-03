@@ -1,6 +1,13 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { makeDefaultDeps } from "../../src/orchestration/default-deps.ts";
+import {
+  __test__ as subagentsTestHooks,
+  unregisterHeadlessSubagent,
+} from "../../src/index.ts";
 
 describe("makeDefaultDeps.waitForCompletion", () => {
   it("returns transcriptPath: null (not undefined) when the handle is unknown", async () => {
@@ -54,5 +61,56 @@ describe("makeDefaultDeps backend selection", () => {
     const result = await deps.waitForCompletion(handle);
     assert.equal(result.exitCode, 1);
     assert.equal(result.error, "aborted");
+  });
+});
+
+describe("makeDefaultDeps headless registration honors agent frontmatter cli", () => {
+  let origMode: string | undefined;
+  let origCwd: string;
+  let tmp: string;
+  before(() => {
+    origMode = process.env.PI_SUBAGENT_MODE;
+    origCwd = process.cwd();
+    tmp = mkdtempSync(join(tmpdir(), "codex-fm-"));
+    mkdirSync(join(tmp, ".pi", "agents"), { recursive: true });
+    writeFileSync(
+      join(tmp, ".pi", "agents", "codex-fm-agent.md"),
+      "---\ncli: codex\n---\n\nCodex agent selected via frontmatter only.\n",
+    );
+  });
+  after(() => {
+    process.chdir(origCwd);
+    if (origMode === undefined) delete process.env.PI_SUBAGENT_MODE;
+    else process.env.PI_SUBAGENT_MODE = origMode;
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("registers cli=codex and claude status semantics when only agent frontmatter sets cli: codex", async () => {
+    process.env.PI_SUBAGENT_MODE = "headless";
+    process.chdir(tmp);
+    const deps = makeDefaultDeps({
+      sessionManager: {
+        getSessionFile: () => join(tmp, "session.jsonl"),
+        getSessionId: () => "parent",
+        getSessionDir: () => tmp,
+      } as any,
+      cwd: tmp,
+    });
+    const ac = new AbortController();
+    ac.abort();
+    // No task.cli: the codex selection comes solely from agent frontmatter.
+    const handle = await deps.launch({ agent: "codex-fm-agent", task: "t" }, false, ac.signal);
+    try {
+      const running = subagentsTestHooks.getRunningSubagents().get(handle.id);
+      assert.ok(running, "subagent must be registered in the headless registry");
+      assert.equal(running.cli, "codex", "registry cli must reflect agent frontmatter cli: codex");
+      assert.equal(
+        running.statusState?.source,
+        "claude",
+        "codex must register with claude (no-activity-file) status semantics",
+      );
+    } finally {
+      unregisterHeadlessSubagent(handle.id);
+    }
   });
 });
