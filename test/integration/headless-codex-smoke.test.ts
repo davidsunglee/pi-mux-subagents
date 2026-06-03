@@ -19,12 +19,14 @@ const CODEX_AVAILABLE = (() => {
   }
 })();
 
-// Parse-only smoke: validates that the resume argv shape produced by
-// buildCodexExecArgs is actually accepted by the installed Codex CLI's argument
-// parser. This is cheap (no model turn), so it runs whenever codex is present —
-// it does not require the slow lane. It deterministically no-ops when codex is
-// absent.
-describe("headless-codex resume argv parses against real CLI", { skip: !CODEX_AVAILABLE, timeout: 30_000 }, () => {
+// Real-CLI smoke: validates that the resume argv shape produced by
+// buildCodexExecArgs and the MCP overrides from buildCodexMcpOverrideArgs are
+// accepted by the installed Codex CLI's parser / config loader. These cases
+// invoke the real `codex` binary (one even runs a model turn), so they are gated
+// on the slow lane — this file is matched by test:integration's glob, and we must
+// not shell out to Codex (time/network/auth) during normal integration runs.
+// Deterministically no-ops when codex is absent or PI_RUN_SLOW is unset.
+describe("headless-codex resume argv parses against real CLI", { skip: !CODEX_AVAILABLE || !SLOW_LANE_OPT_IN, timeout: 30_000 }, () => {
   it("codex accepts `exec [opts] resume <id> -` arg ordering", () => {
     const args = buildCodexExecArgs(
       {

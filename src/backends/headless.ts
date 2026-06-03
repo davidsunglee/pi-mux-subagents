@@ -15,7 +15,7 @@ import {
 } from "../launch/launch-spec.ts";
 import { seedSubagentSessionFile } from "../launch/session.ts";
 import { buildClaudeHeadlessArgs, parseClaudeStreamEvent, parseClaudeResult } from "./claude-stream.ts";
-import { buildCodexExecArgs, parseCodexEvent, parseCodexUsage, extractCodexSessionId } from "./codex-stream.ts";
+import { buildCodexExecArgs, parseCodexEvent, parseCodexUsage, extractCodexSessionId, parseCodexError } from "./codex-stream.ts";
 import { warnClaudeSkillsDropped, warnCodexUnsupportedFeatures } from "../index.ts";
 import type {
   Backend,
@@ -730,6 +730,10 @@ async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
   let stderr = "";
   let sessionId: string | undefined;
   let sawTerminal = false;
+  // Structured failure message parsed from JSONL `error` / `turn.failed` events.
+  // Preferred over benign stderr (e.g. "Reading prompt from stdin...") when the
+  // child exits non-zero so the real model/API/config failure is not masked.
+  let structuredError: string | undefined;
   const rawLines: string[] = []; // teed JSONL for archival
 
   warnCodexUnsupportedFeatures(spec.name, spec.effectiveSkills, spec.effectiveTools);
@@ -832,6 +836,9 @@ async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
         usage.contextTokens = u.contextTokens;
         hasRealUsage = true;
       }
+      const errMsg = parseCodexError(event);
+      if (errMsg) structuredError = errMsg;
+
       if (event.type === "turn.completed") sawTerminal = true;
     };
 
@@ -903,14 +910,14 @@ async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
       }
       if (exitCode !== 0) {
         settle({ name: spec.name, finalMessage, transcriptPath, exitCode, elapsedMs,
-                  error: stderr.trim() || `codex exited with code ${exitCode}`,
+                  error: structuredError || stderr.trim() || `codex exited with code ${exitCode}`,
                   sessionId, sessionKey: sessionId,
                   ...(hasRealUsage ? { usage } : {}), transcript });
         return;
       }
       if (!sawTerminal) {
         settle({ name: spec.name, finalMessage, transcriptPath, exitCode: 1, elapsedMs,
-                  error: "child exited without completion event",
+                  error: structuredError || "child exited without completion event",
                   sessionId, sessionKey: sessionId,
                   ...(hasRealUsage ? { usage } : {}), transcript });
         return;

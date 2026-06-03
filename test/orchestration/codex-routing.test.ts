@@ -50,6 +50,84 @@ describe("headless backend routes cli: codex to the codex binary", () => {
     assert.ok(recordedArgs.includes("--json"), "argv must contain '--json'");
     assert.equal(result.exitCode, 0, "clean turn.completed must yield exitCode 0");
   });
+
+  it("prefers a structured turn.failed message over benign stderr on non-zero exit", async () => {
+    __test__.setSpawn(((_binary: string, _args: string[]) => {
+      const ee = new EventEmitter() as any;
+      ee.stdout = new EventEmitter();
+      ee.stderr = new EventEmitter();
+      ee.stdin = { write: () => true, end: () => {} };
+      ee.killed = false;
+      ee.kill = () => true;
+      setImmediate(() => {
+        // Codex writes informational text to stderr while emitting the real
+        // failure as a JSONL turn.failed event on stdout.
+        ee.stderr.emit("data", Buffer.from("Reading prompt from stdin...\n"));
+        ee.stdout.emit(
+          "data",
+          Buffer.from(
+            JSON.stringify({ type: "turn.failed", error: { message: "model 'gpt-nope' is not available" } }) + "\n",
+          ),
+        );
+        ee.emit("exit", 1);
+        ee.emit("close", 1);
+      });
+      return ee;
+    }) as any);
+
+    const backend = makeHeadlessBackend(ctx);
+    const handle = await backend.launch({ name: "C", task: "t", cli: "codex" } as any, false);
+    const result: BackendResult = await backend.watch(handle);
+
+    assert.equal(result.exitCode, 1, "non-zero codex exit must surface exitCode 1");
+    assert.match(
+      result.error ?? "",
+      /model 'gpt-nope' is not available/,
+      `error must surface the structured turn.failed message; got: ${result.error}`,
+    );
+    assert.doesNotMatch(
+      result.error ?? "",
+      /Reading prompt from stdin/,
+      `error must not be masked by benign stderr; got: ${result.error}`,
+    );
+  });
+
+  it("prefers a structured error event message over benign stderr on non-zero exit", async () => {
+    __test__.setSpawn(((_binary: string, _args: string[]) => {
+      const ee = new EventEmitter() as any;
+      ee.stdout = new EventEmitter();
+      ee.stderr = new EventEmitter();
+      ee.stdin = { write: () => true, end: () => {} };
+      ee.killed = false;
+      ee.kill = () => true;
+      setImmediate(() => {
+        ee.stderr.emit("data", Buffer.from("Reading prompt from stdin...\n"));
+        ee.stdout.emit(
+          "data",
+          Buffer.from(JSON.stringify({ type: "error", message: "401 Unauthorized: check your API key" }) + "\n"),
+        );
+        ee.emit("exit", 1);
+        ee.emit("close", 1);
+      });
+      return ee;
+    }) as any);
+
+    const backend = makeHeadlessBackend(ctx);
+    const handle = await backend.launch({ name: "C", task: "t", cli: "codex" } as any, false);
+    const result: BackendResult = await backend.watch(handle);
+
+    assert.equal(result.exitCode, 1, "non-zero codex exit must surface exitCode 1");
+    assert.match(
+      result.error ?? "",
+      /401 Unauthorized/,
+      `error must surface the structured error event message; got: ${result.error}`,
+    );
+    assert.doesNotMatch(
+      result.error ?? "",
+      /Reading prompt from stdin/,
+      `error must not be masked by benign stderr; got: ${result.error}`,
+    );
+  });
 });
 
 describe("headless backend treats unknown cli as the pi fallback path", () => {

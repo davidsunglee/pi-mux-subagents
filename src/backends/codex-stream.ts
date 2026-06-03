@@ -84,6 +84,22 @@ export function extractCodexSessionId(event: Record<string, unknown>): string | 
   return undefined;
 }
 
+// Codex reports failures as JSONL `error` / `turn.failed` events on stdout while
+// often writing only benign informational text (e.g. "Reading prompt from
+// stdin...") to stderr. Extract the structured failure message so callers can
+// prefer it over boilerplate stderr. The carrier field names are version-
+// sensitive, so check the known shapes defensively and return undefined for
+// anything we cannot read as a non-empty string.
+export function parseCodexError(event: Record<string, unknown>): string | undefined {
+  if (event.type !== "error" && event.type !== "turn.failed") return undefined;
+  const e: any = event;
+  const candidates = [e.error?.message, e.message, e.error, e.reason];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim().length > 0) return c.trim();
+  }
+  return undefined;
+}
+
 export interface CodexUsageDelta { usage: UsageStats; }
 
 export function parseCodexUsage(event: Record<string, unknown>): UsageStats | undefined {
