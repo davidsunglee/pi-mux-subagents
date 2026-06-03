@@ -1123,6 +1123,7 @@ export async function launchSubagent(
       executionPolicy: spec.effectiveExecutionPolicy,
       mcpOverrideArgs,
       task: promptBody,
+      cwd: spec.effectiveCwd ?? ctx.cwd,
     });
     const cdPrefix = buildPaneCdPrefix(spec.effectiveCwd, ctx.cwd);
     const command = `${cdPrefix}${cmdParts.join(" ")}; echo '__SUBAGENT_DONE_'$?'__'`;

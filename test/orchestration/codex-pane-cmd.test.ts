@@ -12,8 +12,15 @@ describe("buildCodexPaneCmdParts (pane Codex command)", () => {
       executionPolicy: "guarded",
       mcpOverrideArgs,
       task: "do the thing",
+      cwd: "/private/tmp/pi-integ-xyz",
     });
     const joined = parts.join(" ");
+
+    // Per-launch project trust override for the cwd (avoids the interactive prompt).
+    assert.ok(
+      joined.includes('projects."/private/tmp/pi-integ-xyz".trust_level="trusted"'),
+      `expected project trust override for cwd; got: ${joined}`,
+    );
 
     // Policy flags (guarded pane).
     assert.ok(joined.includes("--sandbox"), `expected --sandbox; got: ${joined}`);

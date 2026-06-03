@@ -53,6 +53,33 @@ describe("buildCodexExecArgs — headless guarded", () => {
     assert.ok(args.includes("--skip-git-repo-check"), "must include --skip-git-repo-check");
   });
 
+  it("includes a per-launch project trust override for the cwd", () => {
+    const args = buildCodexExecArgs(baseSpec, baseOpts);
+    assert.ok(
+      args.some((a) => a === 'projects."/workspace".trust_level="trusted"'),
+      `expected a trust override for the cwd; got: ${args.join(" ")}`,
+    );
+    // The trust override must be a `-c` value, never written to disk.
+    const trustIdx = args.indexOf('projects."/workspace".trust_level="trusted"');
+    assert.equal(args[trustIdx - 1], "-c", "trust override must follow a -c token");
+  });
+
+  it("escapes quotes/backslashes in the cwd path for the trust override", () => {
+    const args = buildCodexExecArgs(baseSpec, { outputLastMessageFile: "/tmp/out.txt", cwd: '/we\\ird/"quoted"' });
+    assert.ok(
+      args.some((a) => a === 'projects."/we\\\\ird/\\"quoted\\"".trust_level="trusted"'),
+      `expected escaped trust override; got: ${args.join(" ")}`,
+    );
+  });
+
+  it("escapes control characters in the cwd path for the trust override", () => {
+    const args = buildCodexExecArgs(baseSpec, { outputLastMessageFile: "/tmp/out.txt", cwd: "/tmp/line\nbell\u0007del\u007F" });
+    assert.ok(
+      args.some((a) => a === 'projects."/tmp/line\\nbell\\u0007del\\u007F".trust_level="trusted"'),
+      `expected escaped control characters in trust override; got: ${args.join(" ")}`,
+    );
+  });
+
   it("guarded headless includes --sandbox workspace-write and approval_policy never", () => {
     const args = buildCodexExecArgs(baseSpec, baseOpts);
     assert.ok(args.includes("--sandbox"), "guarded headless must include --sandbox");
@@ -108,9 +135,9 @@ describe("buildCodexExecArgs — headless guarded", () => {
 
   it("thinking 'high' → -c model_reasoning_effort=high", () => {
     const args = buildCodexExecArgs({ ...baseSpec, effectiveThinking: "high" }, baseOpts);
-    const idx = args.indexOf("-c");
-    assert.notEqual(idx, -1, "-c must be in args");
-    assert.ok(args[idx + 1].includes('model_reasoning_effort="high"'), `expected effort config, got: ${args[idx + 1]}`);
+    const effortIdx = args.findIndex((a) => a.includes('model_reasoning_effort="high"'));
+    assert.notEqual(effortIdx, -1, "model_reasoning_effort config must be in args");
+    assert.equal(args[effortIdx - 1], "-c", "effort config must follow a -c token");
   });
 
   it("thinking 'off' → no model_reasoning_effort token", () => {
@@ -190,6 +217,29 @@ describe("buildCodexPaneCmdParts", () => {
     });
     const joined = parts.join(" ");
     assert.ok(joined.includes("mcp_servers.pi_subagent.command"), "mcpOverrideArgs must appear in pane parts");
+  });
+
+  it("includes a per-launch project trust override when cwd is provided", () => {
+    const parts = buildCodexPaneCmdParts({
+      executionPolicy: "guarded",
+      mcpOverrideArgs: [],
+      task: "t",
+      cwd: "/workspace",
+    });
+    // Tokens are shell-escaped; the trust override appears in the joined command.
+    assert.ok(
+      parts.join(" ").includes('projects."/workspace".trust_level="trusted"'),
+      `expected trust override in pane parts; got: ${parts.join(" ")}`,
+    );
+  });
+
+  it("omits the project trust override when no cwd is provided", () => {
+    const parts = buildCodexPaneCmdParts({
+      executionPolicy: "guarded",
+      mcpOverrideArgs: [],
+      task: "t",
+    });
+    assert.ok(!parts.join(" ").includes("trust_level"), "must not emit trust override without a cwd");
   });
 
   it("task prompt appears after --", () => {

@@ -10,6 +10,38 @@ export function codexReasoningEffort(thinking: string | undefined): string | und
   return CODEX_REASONING_EFFORTS.has(v) ? v : undefined; // "off"/unknown → omitted
 }
 
+// Escapes a string for embedding inside a TOML basic (double-quoted) string.
+// POSIX paths can legally contain newlines and other control characters, so
+// escape the full TOML-forbidden control range instead of only quotes/slashes.
+function tomlBasicStringEscape(s: string): string {
+  return s.replace(/["\\\u0000-\u001F\u007F-\u009F]/g, (ch) => {
+    switch (ch) {
+      case "\\": return "\\\\";
+      case '"': return '\\"';
+      case "\b": return "\\b";
+      case "\t": return "\\t";
+      case "\n": return "\\n";
+      case "\f": return "\\f";
+      case "\r": return "\\r";
+      default:
+        return `\\u${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}`;
+    }
+  });
+}
+
+// Per-launch override that marks the active workdir as a trusted Codex project.
+// Codex otherwise shows an interactive "Is this a project you trust?" prompt for
+// any directory not already recorded in ~/.codex/config.toml, which blocks an
+// unattended subagent. Emitting this as a `-c` override applies the trust for
+// THIS launch only and does NOT cause pi-mux-subagents to write the user's
+// persistent config (Codex itself may still record its own project trust
+// metadata as a side effect). The cwd is embedded as a TOML quoted key so paths
+// containing quotes/backslashes/control characters survive intact. Returns RAW
+// `-c key=value` tokens (no shell escaping); pane callers shell-escape each token.
+export function buildCodexProjectTrustArgs(cwd: string): string[] {
+  return ["-c", `projects."${tomlBasicStringEscape(cwd)}".trust_level="trusted"`];
+}
+
 export function codexSandboxArgs(policy: "guarded" | "unrestricted", transport: "headless" | "pane"): string[] {
   if (policy === "unrestricted") return ["--dangerously-bypass-approvals-and-sandbox"];
   // guarded:
@@ -31,6 +63,9 @@ export function buildCodexExecArgs(
     "--json", "--output-last-message", opts.outputLastMessageFile,
     "--cd", opts.cwd, "--skip-git-repo-check",
   );
+  // Mark the workdir trusted for this launch so headless exec never stalls on the
+  // interactive trust prompt (and without mutating ~/.codex/config.toml).
+  args.push(...buildCodexProjectTrustArgs(opts.cwd));
   if (spec.codexModelArg) args.push("--model", spec.codexModelArg);
   const effort = codexReasoningEffort(spec.effectiveThinking);
   if (effort) args.push("-c", `model_reasoning_effort="${effort}"`);
@@ -48,9 +83,13 @@ export function buildCodexPaneCmdParts(input: {
   executionPolicy: "guarded" | "unrestricted";
   mcpOverrideArgs: string[];
   task: string;
+  cwd?: string;
 }): string[] {
   const parts: string[] = ["codex"];
   parts.push(...codexSandboxArgs(input.executionPolicy, "pane").map(shellEscape));
+  // Mark the workdir trusted for this launch so the pane Codex never stalls on
+  // the interactive trust prompt (and without mutating ~/.codex/config.toml).
+  if (input.cwd) parts.push(...buildCodexProjectTrustArgs(input.cwd).map(shellEscape));
   if (input.model) parts.push("--model", shellEscape(input.model));
   const effort = codexReasoningEffort(input.effectiveThinking);
   if (effort) parts.push("-c", shellEscape(`model_reasoning_effort="${effort}"`));

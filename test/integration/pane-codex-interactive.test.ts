@@ -30,15 +30,10 @@ for (const backend of backends) {
   describe(`pane-codex-interactive [${backend}]`, { skip: SHOULD_SKIP, timeout: PI_TIMEOUT * 2 }, () => {
     let prevMux: string | undefined;
     let env: TestEnv;
-    let configSnapshotBefore: Buffer | null;
 
     before(() => {
       prevMux = setBackend(backend);
       env = createTestEnv(backend);
-      // Snapshot the persistent Codex config (or record its absence) before launching
-      configSnapshotBefore = existsSync(CODEX_CONFIG_PATH)
-        ? readFileSync(CODEX_CONFIG_PATH)
-        : null;
     });
 
     after(() => {
@@ -57,7 +52,7 @@ for (const backend of backends) {
       };
     }
 
-    it("pane subagent completes via subagent_done and leaves ~/.codex/config.toml unchanged", async () => {
+    it("pane subagent completes via subagent_done without persisting pi-mux Codex config", async () => {
       const running = await launchSubagent(
         {
           name: "codex-auto",
@@ -77,19 +72,25 @@ for (const backend of backends) {
       );
       assert.ok(result.summary && result.summary.length > 0, "summary must be non-empty");
 
-      // Assert the persistent Codex config is byte-identical (or still absent)
-      if (configSnapshotBefore === null) {
-        assert.equal(
-          existsSync(CODEX_CONFIG_PATH),
-          false,
-          `~/.codex/config.toml must remain absent after the run (pi-mux-subagents must never write it)`,
-        );
-      } else {
-        assert.ok(existsSync(CODEX_CONFIG_PATH), "~/.codex/config.toml must still exist after the run");
-        const configAfter = readFileSync(CODEX_CONFIG_PATH);
+      // pi-mux-subagents applies its Codex configuration (MCP completion server,
+      // policy, model, thinking) exclusively through per-launch `-c` overrides and
+      // must never persist any of it to ~/.codex/config.toml. We do NOT require the
+      // file to be byte-identical: Codex itself may update unrelated project-trust
+      // metadata (e.g. a [projects."..."] entry) as a side effect, which is fine.
+      // What must never appear is pi-mux's own injected MCP/sentinel config.
+      if (existsSync(CODEX_CONFIG_PATH)) {
+        const configAfter = readFileSync(CODEX_CONFIG_PATH, "utf8");
         assert.ok(
-          configSnapshotBefore.equals(configAfter),
-          "~/.codex/config.toml must be byte-identical after the run (pi-mux-subagents must never mutate it)",
+          !configAfter.includes("mcp_servers.pi_subagent") && !configAfter.includes("[mcp_servers.pi_subagent]"),
+          "pi-mux MCP server config (pi_subagent) must not leak into ~/.codex/config.toml",
+        );
+        assert.ok(
+          !configAfter.includes("PI_SUBAGENT_DONE_SENTINEL"),
+          "pi-mux completion sentinel env must not leak into ~/.codex/config.toml",
+        );
+        assert.ok(
+          !configAfter.includes("pi-codex-") && !configAfter.includes("subagent_done"),
+          "pi-mux sentinel path / subagent_done config must not leak into ~/.codex/config.toml",
         );
       }
     });
