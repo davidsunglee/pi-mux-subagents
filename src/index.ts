@@ -494,7 +494,8 @@ function formatElapsedMMSS(startTime: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-const ACCENT = "\x1b[38;2;77;163;255m";
+// Nord10: muted dark blue from the Nord Frost palette.
+const ACCENT = "\x1b[38;2;94;129;172m";
 const RST = "\x1b[0m";
 
 /**
@@ -574,7 +575,7 @@ function formatWidgetRightLabel(snapshot: StatusSnapshot): string {
 
 function renderSubagentWidgetLines(agents: RunningSubagent[], width: number): string[] {
   const count = agents.length;
-  const title = "Subagents";
+  const title = "subagents";
   const info = `${count} running`;
 
   const lines: string[] = [borderTop(title, info, width)];
