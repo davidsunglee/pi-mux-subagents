@@ -6,7 +6,7 @@
     "codex",
     "cli"
   ],
-  "status": "open",
+  "status": "closed",
   "created_at": "2026-06-02T19:13:27.631Z"
 }
 
@@ -51,3 +51,4 @@ Add Codex CLI as a third subagent execution backend, with parity to the existing
 - What minimum Codex CLI version should be required for stable JSONL event names and session/thread ID extraction?
 - Can the Codex MCP completion server be injected entirely via per-launch `-c` overrides/temp config, or is a temporary `CODEX_HOME`/profile layer needed?
 - Which environment flag should gate real-cost Codex integration tests in CI/local runs?
+Completed via plan: docs/plans/2026-06-02-support-codex-cli-for-subagent-execution.md
