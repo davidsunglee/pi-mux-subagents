@@ -484,6 +484,14 @@ export function unregisterHeadlessSubagent(id: string): void {
 /** Latest ExtensionContext from session_start, used for widget updates. */
 let latestCtx: ExtensionContext | null = null;
 
+function emitRuntimeWarning(message: string): void {
+  if (latestCtx?.hasUI) {
+    latestCtx.ui.notify(message.replace(/\n+$/, ""), "warning");
+    return;
+  }
+  process.stderr.write(message);
+}
+
 /** Interval timer for widget re-renders. */
 let widgetInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -942,16 +950,17 @@ export function buildClaudeCmdParts(input: ClaudeCmdInputs): string[] {
 }
 
 /**
- * Emit a single-line stderr warning when a Claude subagent has declared
- * `skills:` frontmatter. Claude CLI has no equivalent, so pane and headless
- * share the same warning when those skills are dropped.
+ * Emit a single-line warning when a Claude subagent has declared `skills:`
+ * frontmatter. Claude CLI has no equivalent, so pane and headless share the
+ * same warning text when those skills are dropped.
  */
 export function warnClaudeSkillsDropped(
   subagentName: string,
   effectiveSkills: string | undefined,
+  write: (msg: string) => void = (m) => void process.stderr.write(m),
 ): void {
   if (!effectiveSkills || effectiveSkills.trim() === "") return;
-  process.stderr.write(
+  write(
     `[pi-interactive-subagent] ${subagentName}: ignoring skills=${effectiveSkills} on Claude path — not supported in v1\n`,
   );
 }
@@ -960,11 +969,12 @@ export function warnCodexUnsupportedFeatures(
   subagentName: string,
   effectiveSkills: string | undefined,
   effectiveTools: string | undefined,
+  write: (msg: string) => void = (m) => void process.stderr.write(m),
 ): void {
   if (effectiveSkills && effectiveSkills.trim() !== "")
-    process.stderr.write(`[pi-interactive-subagent] ${subagentName}: ignoring skills=${effectiveSkills} on Codex path — not supported in v1\n`);
+    write(`[pi-interactive-subagent] ${subagentName}: ignoring skills=${effectiveSkills} on Codex path — not supported in v1\n`);
   if (effectiveTools && effectiveTools.trim() !== "")
-    process.stderr.write(`[pi-interactive-subagent] ${subagentName}: ignoring tools=${effectiveTools} on Codex path — pi tool allowlists are not applied (the internal subagent_done MCP tool is always available)\n`);
+    write(`[pi-interactive-subagent] ${subagentName}: ignoring tools=${effectiveTools} on Codex path — pi tool allowlists are not applied (the internal subagent_done MCP tool is always available)\n`);
 }
 
 // Re-export shellEscape so tests can verify exact argv encoding against the
@@ -1024,7 +1034,7 @@ export async function launchSubagent(
   if (!sessionFile) throw new Error("No session file");
 
   const spec = resolveLaunchSpec(params, ctx);
-  warnGuardedPolicyUnsupported(spec);
+  warnGuardedPolicyUnsupported(spec, emitRuntimeWarning);
 
   // Use pre-created surface (parallel mode) or create a new one.
   // For new surfaces, pause briefly so the shell is ready before sending the command.
@@ -1043,7 +1053,7 @@ export async function launchSubagent(
 
     // Claude CLI has no skills equivalent; warn before building argv so pane
     // and headless use identical wording.
-    warnClaudeSkillsDropped(params.name, spec.effectiveSkills);
+    warnClaudeSkillsDropped(params.name, spec.effectiveSkills, emitRuntimeWarning);
 
     const cmdParts = buildClaudeCmdParts({
       sentinelFile,
@@ -1113,7 +1123,7 @@ export async function launchSubagent(
   // ── Codex CLI path ──
   if (spec.effectiveCli === "codex") {
     const sentinelFile = `/tmp/pi-codex-${id}-done`;
-    warnCodexUnsupportedFeatures(params.name, spec.effectiveSkills, spec.effectiveTools);
+    warnCodexUnsupportedFeatures(params.name, spec.effectiveSkills, spec.effectiveTools, emitRuntimeWarning);
     const addendum = buildClaudeCompletionAddendum(spec.autoExit); // CLI-neutral text ("call subagent_done")
     const promptBody = `${spec.fullTask}\n\n${addendum}`;            // identity is already in spec.fullTask
     const mcpOverrideArgs = buildCodexMcpOverrideArgs({ sentinelFile });
@@ -1932,6 +1942,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
   // Clean up on session shutdown
   pi.on("session_shutdown", (_event, _ctx) => {
+    latestCtx = null;
     if (widgetInterval) {
       clearInterval(widgetInterval);
       widgetInterval = null;
