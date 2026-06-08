@@ -86,7 +86,7 @@ export function resolveOrderingSentence(
     posture === "final-message-then-tool" &&
     carrier === "out-of-band-final-message"
   ) {
-    // Byte-identical to the legacy buildClaudeCompletionAddendum tail (Claude, pi).
+    // Byte-identical to the legacy Claude completion-addendum tail (Claude, pi).
     return (
       "your FINAL assistant message should summarize what you accomplished, then " +
       "call `subagent_done` to end the session."

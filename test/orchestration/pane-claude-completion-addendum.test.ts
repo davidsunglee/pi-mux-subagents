@@ -1,9 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildClaudeCompletionAddendum,
   resolveLaunchSpec,
 } from "../../src/launch/launch-spec.ts";
+import {
+  PANE_COMPLETION_PROTOCOLS,
+  buildInstructionText,
+} from "../../src/launch/pane-completion-protocol.ts";
 
 const baseCtx = {
   sessionManager: {
@@ -14,18 +17,16 @@ const baseCtx = {
   cwd: "/tmp",
 };
 
-describe("buildClaudeCompletionAddendum", () => {
-  it("returns the autonomous form for autoExit=true", () => {
-    const text = buildClaudeCompletionAddendum(true);
+describe("Claude completion seam variant", () => {
+  it("autonomous variant carries the one-shot framing and subagent_done call", () => {
+    const text = buildInstructionText(PANE_COMPLETION_PROTOCOLS.claude.autonomous);
     assert.match(text, /one-shot subagent/);
-    assert.match(text, /without asking the user questions/);
     assert.match(text, /call `subagent_done`/);
   });
 
-  it("returns the interactive form for autoExit=false", () => {
-    const text = buildClaudeCompletionAddendum(false);
+  it("interactive variant carries the interactive framing and subagent_done call", () => {
+    const text = buildInstructionText(PANE_COMPLETION_PROTOCOLS.claude.interactive);
     assert.match(text, /interactive subagent/);
-    assert.match(text, /ask clarifying questions/);
     assert.match(text, /call `subagent_done`/);
   });
 });

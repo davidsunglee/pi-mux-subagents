@@ -74,8 +74,8 @@ import {
   getArtifactDir,
   getAgentConfigDir,
   buildPiPromptArgs,
-  buildClaudeCompletionAddendum,
 } from "./launch/launch-spec.ts";
+import { composePanePrompt, resolvePaneCompletionProtocol, assertNever } from "./launch/pane-completion-protocol.ts";
 import {
   createStatusState,
   type SubagentStatusState,
@@ -1046,7 +1046,7 @@ export async function launchSubagent(
   }
 
   // ── Claude Code CLI path ──
-  if (spec.effectiveCli === "claude") {
+  if (spec.paneBackend === "claude") {
     const sentinelFile = `/tmp/pi-claude-${id}-done`;
     const pluginDir = join(SUBAGENTS_DIR, "claude-plugin");
     const pluginDirResolved = existsSync(pluginDir) ? pluginDir : undefined;
@@ -1121,11 +1121,17 @@ export async function launchSubagent(
   }
 
   // ── Codex CLI path ──
-  if (spec.effectiveCli === "codex") {
+  if (spec.paneBackend === "codex") {
     const sentinelFile = `/tmp/pi-codex-${id}-done`;
     warnCodexUnsupportedFeatures(params.name, spec.effectiveSkills, spec.effectiveTools, emitRuntimeWarning);
-    const addendum = buildClaudeCompletionAddendum(spec.autoExit); // CLI-neutral text ("call subagent_done")
-    const promptBody = `${spec.fullTask}\n\n${addendum}`;            // identity is already in spec.fullTask
+    // Codex completion is tool-first and delivered via the task prompt: the
+    // neutral core (identity + task) plus the Codex seam variant resolved from
+    // the finite paneBackend. No Claude final-message-first wording reaches here.
+    const codexMode = spec.autoExit ? "autonomous" : "interactive";
+    const { taskPrompt: promptBody } = composePanePrompt({
+      neutralCore: spec.neutralCore,
+      protocol: resolvePaneCompletionProtocol(spec.paneBackend, codexMode),
+    });
     const mcpOverrideArgs = buildCodexMcpOverrideArgs({ sentinelFile });
     const cmdParts = buildCodexPaneCmdParts({
       model: spec.codexModelArg,
@@ -1157,133 +1163,146 @@ export async function launchSubagent(
   }
 
   // ── Pi CLI path ──
+  if (spec.paneBackend === "pi") {
+    const activityFile = getSubagentActivityFile(spec.artifactDir, id);
+    mkdirSync(dirname(activityFile), { recursive: true });
 
-  const activityFile = getSubagentActivityFile(spec.artifactDir, id);
-  mkdirSync(dirname(activityFile), { recursive: true });
-
-  let piTailStartOffset = 0;
-  if (spec.seededSessionMode) {
-    seedSubagentSessionFile({
-      mode: spec.seededSessionMode,
-      parentSessionFile: sessionFile,
-      childSessionFile: spec.subagentSessionFile,
-      childCwd: spec.effectiveCwd ?? ctx.cwd,
-    });
-    try {
-      piTailStartOffset = statSync(spec.subagentSessionFile).size;
-    } catch {
-      piTailStartOffset = 0;
+    let piTailStartOffset = 0;
+    if (spec.seededSessionMode) {
+      seedSubagentSessionFile({
+        mode: spec.seededSessionMode,
+        parentSessionFile: sessionFile,
+        childSessionFile: spec.subagentSessionFile,
+        childCwd: spec.effectiveCwd ?? ctx.cwd,
+      });
+      try {
+        piTailStartOffset = statSync(spec.subagentSessionFile).size;
+      } catch {
+        piTailStartOffset = 0;
+      }
     }
+
+    // Build pi command
+    const parts: string[] = ["pi"];
+    parts.push("--session", shellEscape(spec.subagentSessionFile));
+
+    const subagentDonePath = join(SUBAGENTS_DIR, "tools", "subagent-done.ts");
+    parts.push("-e", shellEscape(subagentDonePath));
+
+    if (spec.effectiveModel) {
+      const model = spec.effectiveThinking
+        ? `${spec.effectiveModel}:${spec.effectiveThinking}`
+        : spec.effectiveModel;
+      parts.push("--model", shellEscape(model));
+    }
+
+    // Write system-prompt artifact when frontmatter sets `system-prompt:
+    // append|replace`. Pi's --append-system-prompt / --system-prompt auto-detect
+    // file paths and read their contents — side-steps shell-escaping problems
+    // with multiline content.
+    const syspromptPath = writeSystemPromptArtifact(spec);
+    if (syspromptPath) {
+      const flag = spec.systemPromptMode === "replace" ? "--system-prompt" : "--append-system-prompt";
+      parts.push(flag, shellEscape(syspromptPath));
+    }
+
+    const toolsArg = resolvePiToolsArg(spec.effectiveTools);
+    if (toolsArg) {
+      parts.push("--tools", shellEscape(toolsArg));
+    }
+
+    // Build env prefix: denied tools + subagent identity + config dir propagation
+    const envParts: string[] = [];
+
+    for (const [key, value] of Object.entries(spec.configRootEnv)) {
+      envParts.push(`${key}=${shellEscape(value)}`);
+    }
+
+    envParts.push(`PI_DENY_TOOLS=${shellEscape([...spec.denySet].join(","))}`);
+    envParts.push(`PI_SUBAGENT_NAME=${shellEscape(params.name)}`);
+    if (params.agent) {
+      envParts.push(`PI_SUBAGENT_AGENT=${shellEscape(params.agent)}`);
+    }
+    if (spec.autoExit) {
+      envParts.push(`PI_SUBAGENT_AUTO_EXIT=1`);
+    }
+    envParts.push(`PI_SUBAGENT_SESSION=${shellEscape(spec.subagentSessionFile)}`);
+    envParts.push(`PI_SUBAGENT_ID=${shellEscape(id)}`);
+    envParts.push(`PI_SUBAGENT_ACTIVITY_FILE=${shellEscape(activityFile)}`);
+    envParts.push(`PI_SUBAGENT_SURFACE=${shellEscape(surface)}`);
+    const envPrefix = envParts.join(" ") + " ";
+
+    // Pass task and skill prompts to the sub-agent.
+    // Only full-context fork mode gets a direct task argument because it already
+    // inherits the parent conversation. Blank-session modes use artifact-backed
+    // handoff so the wrapper instructions arrive as the initial user message.
+    let taskArg: string;
+    if (spec.taskDelivery === "direct") {
+      // pi's completion is native-extension; composePanePrompt passes the core
+      // through unchanged, so taskArg stays byte-identical to spec.fullTask.
+      const piMode = spec.autoExit ? "autonomous" : "interactive";
+      taskArg = composePanePrompt({
+        neutralCore: spec.fullTask,
+        protocol: resolvePaneCompletionProtocol(spec.paneBackend, piMode),
+      }).taskPrompt;
+    } else {
+      taskArg = `@${writeTaskArtifact(spec)}`;
+    }
+
+    for (const promptArg of buildPiPromptArgs({
+      effectiveSkills: spec.effectiveSkills,
+      taskDelivery: spec.taskDelivery,
+      taskArg,
+    })) {
+      parts.push(shellEscape(promptArg));
+    }
+
+    // Use the already-resolved cwd so session placement, config roots, and the
+    // pane `cd` prefix agree. Default to ctx.cwd so pane and headless match.
+    const cdPrefix = buildPaneCdPrefix(spec.effectiveCwd, ctx.cwd);
+
+    const piCommand = cdPrefix + envPrefix + parts.join(" ");
+    const command = `${piCommand}; echo '__SUBAGENT_DONE_'$?'__'`;
+    const launchScriptName = `${safeScriptName(params.name, "subagent")}-${id}.sh`;
+    const launchScriptFile = join(spec.artifactDir, "subagent-scripts", launchScriptName);
+    sendLongCommand(surface, command, {
+      scriptPath: launchScriptFile,
+      scriptPreamble: [
+        `# Subagent launch script for ${params.name}`,
+        `# Generated: ${new Date().toISOString()}`,
+        `# Session: ${spec.subagentSessionFile}`,
+        `# Surface: ${surface}`,
+      ].join("\n"),
+    });
+
+    const running: RunningSubagent = {
+      id,
+      name: params.name,
+      task: params.task,
+      agent: params.agent,
+      backend: "pane",
+      surface,
+      startTime,
+      sessionFile: spec.subagentSessionFile,
+      piTailStartOffset,
+      launchScriptFile,
+      cli: "pi",
+      activityFile,
+      interactive: spec.effectiveInteractive,
+      statusState: createStatusState({ source: "pi", startTimeMs: startTime }),
+    };
+
+    runningSubagents.set(id, running);
+    startWidgetRefresh();   // idempotent via widgetInterval guard
+    if (piForRegistry) startStatusRefresh(piForRegistry);
+    return running;
   }
 
-  // Build pi command
-  const parts: string[] = ["pi"];
-  parts.push("--session", shellEscape(spec.subagentSessionFile));
-
-  const subagentDonePath = join(SUBAGENTS_DIR, "tools", "subagent-done.ts");
-  parts.push("-e", shellEscape(subagentDonePath));
-
-  if (spec.effectiveModel) {
-    const model = spec.effectiveThinking
-      ? `${spec.effectiveModel}:${spec.effectiveThinking}`
-      : spec.effectiveModel;
-    parts.push("--model", shellEscape(model));
-  }
-
-  // Write system-prompt artifact when frontmatter sets `system-prompt:
-  // append|replace`. Pi's --append-system-prompt / --system-prompt auto-detect
-  // file paths and read their contents — side-steps shell-escaping problems
-  // with multiline content.
-  const syspromptPath = writeSystemPromptArtifact(spec);
-  if (syspromptPath) {
-    const flag = spec.systemPromptMode === "replace" ? "--system-prompt" : "--append-system-prompt";
-    parts.push(flag, shellEscape(syspromptPath));
-  }
-
-  const toolsArg = resolvePiToolsArg(spec.effectiveTools);
-  if (toolsArg) {
-    parts.push("--tools", shellEscape(toolsArg));
-  }
-
-  // Build env prefix: denied tools + subagent identity + config dir propagation
-  const envParts: string[] = [];
-
-  for (const [key, value] of Object.entries(spec.configRootEnv)) {
-    envParts.push(`${key}=${shellEscape(value)}`);
-  }
-
-  envParts.push(`PI_DENY_TOOLS=${shellEscape([...spec.denySet].join(","))}`);
-  envParts.push(`PI_SUBAGENT_NAME=${shellEscape(params.name)}`);
-  if (params.agent) {
-    envParts.push(`PI_SUBAGENT_AGENT=${shellEscape(params.agent)}`);
-  }
-  if (spec.autoExit) {
-    envParts.push(`PI_SUBAGENT_AUTO_EXIT=1`);
-  }
-  envParts.push(`PI_SUBAGENT_SESSION=${shellEscape(spec.subagentSessionFile)}`);
-  envParts.push(`PI_SUBAGENT_ID=${shellEscape(id)}`);
-  envParts.push(`PI_SUBAGENT_ACTIVITY_FILE=${shellEscape(activityFile)}`);
-  envParts.push(`PI_SUBAGENT_SURFACE=${shellEscape(surface)}`);
-  const envPrefix = envParts.join(" ") + " ";
-
-  // Pass task and skill prompts to the sub-agent.
-  // Only full-context fork mode gets a direct task argument because it already
-  // inherits the parent conversation. Blank-session modes use artifact-backed
-  // handoff so the wrapper instructions arrive as the initial user message.
-  let taskArg: string;
-  if (spec.taskDelivery === "direct") {
-    taskArg = spec.fullTask;
-  } else {
-    taskArg = `@${writeTaskArtifact(spec)}`;
-  }
-
-  for (const promptArg of buildPiPromptArgs({
-    effectiveSkills: spec.effectiveSkills,
-    taskDelivery: spec.taskDelivery,
-    taskArg,
-  })) {
-    parts.push(shellEscape(promptArg));
-  }
-
-  // Use the already-resolved cwd so session placement, config roots, and the
-  // pane `cd` prefix agree. Default to ctx.cwd so pane and headless match.
-  const cdPrefix = buildPaneCdPrefix(spec.effectiveCwd, ctx.cwd);
-
-  const piCommand = cdPrefix + envPrefix + parts.join(" ");
-  const command = `${piCommand}; echo '__SUBAGENT_DONE_'$?'__'`;
-  const launchScriptName = `${safeScriptName(params.name, "subagent")}-${id}.sh`;
-  const launchScriptFile = join(spec.artifactDir, "subagent-scripts", launchScriptName);
-  sendLongCommand(surface, command, {
-    scriptPath: launchScriptFile,
-    scriptPreamble: [
-      `# Subagent launch script for ${params.name}`,
-      `# Generated: ${new Date().toISOString()}`,
-      `# Session: ${spec.subagentSessionFile}`,
-      `# Surface: ${surface}`,
-    ].join("\n"),
-  });
-
-  const running: RunningSubagent = {
-    id,
-    name: params.name,
-    task: params.task,
-    agent: params.agent,
-    backend: "pane",
-    surface,
-    startTime,
-    sessionFile: spec.subagentSessionFile,
-    piTailStartOffset,
-    launchScriptFile,
-    cli: "pi",
-    activityFile,
-    interactive: spec.effectiveInteractive,
-    statusState: createStatusState({ source: "pi", startTimeMs: startTime }),
-  };
-
-  runningSubagents.set(id, running);
-  startWidgetRefresh();   // idempotent via widgetInterval guard
-  if (piForRegistry) startStatusRefresh(piForRegistry);
-  return running;
+  // Exhaustiveness: claude/codex/pi all returned above. For a valid PaneBackend
+  // `spec.paneBackend` is now `never`, so this typechecks today; adding a member
+  // to PaneBackend without a dispatch branch makes it a compile error (and the
+  // protocol table fails too) — the launcher dispatch and the seam cannot diverge.
+  return assertNever(spec.paneBackend);
 }
 
 /**
