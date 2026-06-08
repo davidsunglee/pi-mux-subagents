@@ -2,6 +2,7 @@ import { Type, type Static } from "typebox";
 import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { composePanePrompt, resolvePaneCompletionProtocol, type PaneBackend } from "./pane-completion-protocol.ts";
 
 /**
  * Launch-spec normalization for subagent launches.
@@ -169,6 +170,26 @@ export interface ResolvedLaunchSpec {
   fullTask: string;
   /** Task body for Claude backends — NEVER includes the `roleBlock`; identity reaches Claude via the system-prompt flag. */
   claudeTaskBody: string;
+  /**
+   * Finite pane-backend discriminator, projected from `effectiveCli`. This is
+   * the launcher-visible pane backend union that keys the completion-protocol
+   * seam: the pane launch dispatch in index.ts switches on this field, and
+   * `resolvePaneCompletionProtocol`/`PANE_COMPLETION_PROTOCOLS` are keyed on the
+   * SAME `PaneBackend` union — so a new pane backend breaks both the dispatch
+   * (`assertNever`) and the protocol table until handled. Unknown CLIs map to
+   * "pi" to preserve the legacy fall-through. Pane-scoped: headless dispatch
+   * keys on `effectiveCli`, which is left unchanged.
+   */
+  paneBackend: PaneBackend;
+  /**
+   * CLI-neutral core: the agent identity role block + task payload, FREE of
+   * completion-protocol wording (no modeHint/summaryInstruction). The Codex
+   * pane composer consumes this; `fullTask`/`claudeTaskBody` survive as derived
+   * outputs for the other consumers. Mirrors fullTask's identity handling:
+   * roleBlock is included only when identity is not routed via the system
+   * prompt; fork/lineage delivery uses the bare task.
+   */
+  neutralCore: string;
 
   sessionMode: SubagentSessionMode;
   seededSessionMode: "lineage-only" | "fork" | null;
@@ -677,6 +698,20 @@ export function resolveLaunchSpec(
     ? params.task
     : `${modeHint}\n\n${params.task}\n\n${summaryInstruction}`;
 
+  // Finite pane-backend discriminator (ties effectiveCli → the completion seam).
+  // Unknown / headless-only CLIs fall through to "pi", matching the legacy pane
+  // dispatch (anything not "claude"/"codex" launched as pi). A genuinely new
+  // pane backend is added by extending PaneBackend (which breaks the build until
+  // a variant + dispatch branch exist), never via an ad-hoc effectiveCli string.
+  const paneBackend: PaneBackend =
+    effectiveCli === "claude" ? "claude" : effectiveCli === "codex" ? "codex" : "pi";
+
+  // CLI-neutral core (identity + task, no completion wording). Mirrors
+  // fullTask's roleBlock handling so Codex identity delivery is unchanged.
+  const neutralCore = inheritsConversationContext
+    ? params.task
+    : `${roleBlock}\n\n${params.task}`;
+
   const skillPrompts = (effectiveSkills ?? "")
     .split(",")
     .map((s) => s.trim())
@@ -716,6 +751,8 @@ export function resolveLaunchSpec(
     systemPromptMode,
     fullTask,
     claudeTaskBody,
+    paneBackend,
+    neutralCore,
 
     sessionMode,
     seededSessionMode,
@@ -727,8 +764,14 @@ export function resolveLaunchSpec(
     autoExit: agentDefs?.autoExit === true,
     effectiveInteractive,
     claudeCompletionAddendum:
-      effectiveCli === "claude"
-        ? buildClaudeCompletionAddendum(agentDefs?.autoExit === true)
+      paneBackend === "claude"
+        ? composePanePrompt({
+            neutralCore: claudeTaskBody,
+            protocol: resolvePaneCompletionProtocol(
+              "claude",
+              agentDefs?.autoExit === true ? "autonomous" : "interactive",
+            ),
+          }).systemPromptCompletion
         : null,
     denySet,
     resumeSessionId: params.resumeSessionId,

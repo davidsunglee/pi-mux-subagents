@@ -684,4 +684,64 @@ describe("resolveLaunchSpec", () => {
     assert.ok(spec.fullTask.slice(bodyIdx, callerIdx).includes("\n\n"),
       "blank-line separator between body and caller prompt in role block");
   });
+
+  describe("paneBackend + neutralCore + seam-sourced claudeCompletionAddendum", () => {
+    const CLAUDE_INTERACTIVE =
+      "You are an interactive subagent. The user can type into this pane at any time — feel free to ask clarifying questions as many times as needed. When the task is complete, your FINAL assistant message should summarize what you accomplished, then call `subagent_done` to end the session.";
+    const CLAUDE_AUTONOMOUS =
+      "You are a one-shot subagent. Complete your task autonomously without asking the user questions. When finished, your FINAL assistant message should summarize what you accomplished, then call `subagent_done` to end the session.";
+
+    it("paneBackend defaults to 'pi' when no cli is given", () => {
+      const spec = resolveLaunchSpec({ name: "N", task: "t" }, baseCtx);
+      assert.equal(spec.paneBackend, "pi");
+    });
+
+    it("paneBackend is 'claude' for cli: 'claude'", () => {
+      const spec = resolveLaunchSpec({ name: "N", task: "t", cli: "claude" }, baseCtx);
+      assert.equal(spec.paneBackend, "claude");
+    });
+
+    it("paneBackend is 'codex' for cli: 'codex'", () => {
+      const spec = resolveLaunchSpec({ name: "N", task: "t", cli: "codex" }, baseCtx);
+      assert.equal(spec.paneBackend, "codex");
+    });
+
+    it("paneBackend falls through to 'pi' for unknown cli (legacy behavior preserved)", () => {
+      const spec = resolveLaunchSpec({ name: "N", task: "t", cli: "opencode" }, baseCtx);
+      assert.equal(spec.paneBackend, "pi");
+    });
+
+    it("neutralCore contains the task body and excludes completion wording", () => {
+      const spec = resolveLaunchSpec({ name: "N", task: "TASKBODY" }, baseCtx);
+      assert.match(spec.neutralCore, /TASKBODY/);
+      assert.doesNotMatch(spec.neutralCore, /Complete your task/);
+      assert.doesNotMatch(spec.neutralCore, /FINAL assistant message/);
+    });
+
+    it("fullTask still contains completion wording (byte-stable derived output)", () => {
+      const spec = resolveLaunchSpec({ name: "N", task: "TASKBODY" }, baseCtx);
+      assert.match(spec.fullTask, /Complete your task/);
+      assert.match(spec.fullTask, /FINAL assistant message/);
+    });
+
+    it("neutralCore includes identity (role block) when systemPrompt is set", () => {
+      const spec = resolveLaunchSpec({ name: "N", task: "T", systemPrompt: "ROLE_X" }, baseCtx);
+      assert.match(spec.neutralCore, /ROLE_X/);
+      assert.doesNotMatch(spec.neutralCore, /Complete your task/);
+    });
+
+    it("claudeCompletionAddendum equals the Reference interactive Claude string for cli: 'claude'", () => {
+      const spec = resolveLaunchSpec({ name: "C", task: "t", cli: "claude" }, baseCtx);
+      assert.equal(spec.claudeCompletionAddendum, CLAUDE_INTERACTIVE);
+    });
+
+    it("claudeCompletionAddendum equals the Reference autonomous Claude string when agent declares auto-exit: true", () => {
+      const spec = resolveLaunchSpec(
+        { name: "C", task: "t", agent: "test-echo", cli: "claude" },
+        baseCtx,
+        { agentSearchDirs: ["test/integration/agents"] },
+      );
+      assert.equal(spec.claudeCompletionAddendum, CLAUDE_AUTONOMOUS);
+    });
+  });
 });
