@@ -17,9 +17,7 @@ import { renameSync, writeFileSync } from "node:fs";
 
 const TOOL_NAME = "subagent_done";
 const TOOL_DESCRIPTION =
-  "Call this when your task is complete. Your final assistant message before " +
-  "this call should summarize what you accomplished — that summary is returned " +
-  "to the parent agent. The session will end after this call.";
+  "Call this when your task is complete. Provide your summary in the `message` argument — that text is returned to the parent agent. The session ends after this call; do not rely on a separate final assistant message, and send no further output afterward.";
 
 const server = new Server(
   { name: "pi-subagent", version: "1.0.0" },
@@ -37,8 +35,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           message: {
             type: "string",
             description:
-              "Optional final summary returned to the parent. Defaults to the " +
-              "last assistant message if omitted.",
+              "Your task summary, returned to the parent agent. Provide it here in the `message` argument rather than in a separate final message. If omitted, the parent falls back to your last assistant message.",
           },
         },
       },
