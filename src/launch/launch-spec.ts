@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { composePanePrompt, resolvePaneCompletionProtocol, type PaneBackend } from "./pane-completion-protocol.ts";
 import { resolveIdentityDelivery, identityRoutesToSystemPrompt } from "./identity-delivery.ts";
+import { emitDiagnostic, type DiagnosticContext } from "../diagnostics/diagnostics.ts";
 
 /**
  * Launch-spec normalization for subagent launches.
@@ -786,16 +787,19 @@ export function resolveLaunchSpec(
  */
 export function warnGuardedPolicyUnsupported(
   spec: Pick<ResolvedLaunchSpec, "effectiveCli" | "effectiveExecutionPolicy" | "executionPolicySource" | "name">,
-  write: (msg: string) => void = (m) => void process.stderr.write(m),
+  context?: DiagnosticContext,
 ): void {
   if (spec.effectiveCli === "claude" || spec.effectiveCli === "codex") return;
   if (spec.effectiveExecutionPolicy !== "guarded") return;
   if (spec.executionPolicySource === "default") return;
-  write(
-    `[pi-interactive-subagent] ${spec.name}: execution-policy=guarded requested but ` +
+  emitDiagnostic({
+    code: "guarded-policy-unsupported",
+    audience: { human: true, structured: true },
+    message:
+      `[pi-interactive-subagent] ${spec.name}: execution-policy=guarded requested but ` +
       `the '${spec.effectiveCli}' backend has no guarded mode — running with current ` +
       `(unrestricted) behavior.\n`,
-  );
+  }, context);
 }
 
 // ── Artifact-write helpers (side-effectful) ────────────────────────────────

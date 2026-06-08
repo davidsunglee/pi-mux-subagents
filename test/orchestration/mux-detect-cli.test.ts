@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { buildDetectionPayload } from "../../src/bin/pi-mux-detect.ts";
 import { __test__ as selectTest, selectBackend as realSelectBackend } from "../../src/backends/select.ts";
 import { __test__ as shellTest } from "../../src/mux/shell.ts";
@@ -300,5 +302,20 @@ describe("CLI vs runtime parity", () => {
     assert.equal(payload.muxPreferenceInvalid, null);
     assert.equal(typeof payload.reason, "string");
     assert.ok(payload.reason.includes("mux=herdr"), `reason: ${payload.reason}`);
+  });
+});
+
+const DETECT_CLI = fileURLToPath(new URL("../../src/bin/pi-mux-detect.ts", import.meta.url));
+
+describe("pi-mux-detect CLI stderr diagnostics (unchanged by dispatcher refactor)", () => {
+  it("writes the unknown-argument diagnostic to stderr byte-for-byte and exits 2", () => {
+    const run = spawnSync(process.execPath, [DETECT_CLI, "--bogus-arg"], { encoding: "utf8" });
+    assert.equal(run.status, 2, `expected exit code 2; stderr=${run.stderr}`);
+    assert.equal(run.stdout, "", "diagnostic must not leak to stdout");
+    assert.equal(
+      run.stderr,
+      "Unknown argument: --bogus-arg\nUsage: pi-mux-detect [--help|-h] [--version]\n",
+      "CLI stderr diagnostic must be byte-for-byte unchanged",
+    );
   });
 });

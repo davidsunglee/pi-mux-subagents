@@ -9,6 +9,7 @@ import {
   warnGuardedPolicyUnsupported,
   writeSystemPromptArtifact,
 } from "../../src/launch/launch-spec.ts";
+import { createDiagnosticCollector } from "../../src/diagnostics/diagnostics.ts";
 
 const baseCtx = {
   sessionManager: {
@@ -101,35 +102,41 @@ describe("resolveLaunchSpec", () => {
   });
 
   it("warns when guarded is explicitly requested for a non-Claude backend", () => {
-    const warnings: string[] = [];
-    warnGuardedPolicyUnsupported(
-      { name: "PiWorker", effectiveCli: "pi", effectiveExecutionPolicy: "guarded", executionPolicySource: "params" },
-      (m) => warnings.push(m),
-    );
+    const collector = createDiagnosticCollector();
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr as any).write = () => true; // suppress the human-channel stderr line
+    try {
+      warnGuardedPolicyUnsupported(
+        { name: "PiWorker", effectiveCli: "pi", effectiveExecutionPolicy: "guarded", executionPolicySource: "params" },
+        { collector },
+      );
+    } finally {
+      (process.stderr as any).write = orig;
+    }
+    const warnings = collector.drain();
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /execution-policy=guarded requested/);
     assert.match(warnings[0], /'pi' backend has no guarded mode/);
   });
 
   it("does not warn for the implicit guarded default, unrestricted, or Claude", () => {
-    const warnings: string[] = [];
-    const push = (m: string) => warnings.push(m);
+    const collector = createDiagnosticCollector();
     // implicit default → no nag on routine pi launches
     warnGuardedPolicyUnsupported(
       { name: "A", effectiveCli: "pi", effectiveExecutionPolicy: "guarded", executionPolicySource: "default" },
-      push,
+      { collector },
     );
     // unrestricted is honored by pi today → nothing to warn about
     warnGuardedPolicyUnsupported(
       { name: "B", effectiveCli: "pi", effectiveExecutionPolicy: "unrestricted", executionPolicySource: "params" },
-      push,
+      { collector },
     );
     // Claude implements guarded → no warning
     warnGuardedPolicyUnsupported(
       { name: "C", effectiveCli: "claude", effectiveExecutionPolicy: "guarded", executionPolicySource: "params" },
-      push,
+      { collector },
     );
-    assert.deepEqual(warnings, []);
+    assert.deepEqual(collector.drain(), []);
   });
 
   it("loads agent defaults and lets params override them", () => {

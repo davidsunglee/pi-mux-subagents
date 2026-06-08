@@ -4,6 +4,7 @@ import {
   resolveLaunchSpec,
   warnGuardedPolicyUnsupported,
 } from "../../src/launch/launch-spec.ts";
+import { createDiagnosticCollector } from "../../src/diagnostics/diagnostics.ts";
 
 describe("codex-launch-spec", () => {
   describe("codexModelArg", () => {
@@ -55,51 +56,36 @@ describe("codex-launch-spec", () => {
 
   describe("warnGuardedPolicyUnsupported", () => {
     it("does not warn when effectiveCli is codex with guarded policy", () => {
-      let writeCount = 0;
+      const collector = createDiagnosticCollector();
       warnGuardedPolicyUnsupported(
-        {
-          effectiveCli: "codex",
-          effectiveExecutionPolicy: "guarded",
-          executionPolicySource: "params",
-          name: "test",
-        },
-        () => {
-          writeCount++;
-        },
+        { effectiveCli: "codex", effectiveExecutionPolicy: "guarded", executionPolicySource: "params", name: "test" },
+        { collector },
       );
-      assert.equal(writeCount, 0, "codex should not trigger guarded-unsupported warning");
+      assert.equal(collector.drain().length, 0, "codex should not trigger guarded-unsupported warning");
     });
 
     it("warns when effectiveCli is pi with guarded policy", () => {
-      let writeCount = 0;
-      warnGuardedPolicyUnsupported(
-        {
-          effectiveCli: "pi",
-          effectiveExecutionPolicy: "guarded",
-          executionPolicySource: "params",
-          name: "test",
-        },
-        () => {
-          writeCount++;
-        },
-      );
-      assert.equal(writeCount, 1, "pi should trigger guarded-unsupported warning");
+      const collector = createDiagnosticCollector();
+      const orig = process.stderr.write.bind(process.stderr);
+      (process.stderr as any).write = () => true; // suppress the human-channel stderr line
+      try {
+        warnGuardedPolicyUnsupported(
+          { effectiveCli: "pi", effectiveExecutionPolicy: "guarded", executionPolicySource: "params", name: "test" },
+          { collector },
+        );
+      } finally {
+        (process.stderr as any).write = orig;
+      }
+      assert.equal(collector.drain().length, 1, "pi should trigger guarded-unsupported warning");
     });
 
     it("does not warn when policy is default (not explicit)", () => {
-      let writeCount = 0;
+      const collector = createDiagnosticCollector();
       warnGuardedPolicyUnsupported(
-        {
-          effectiveCli: "pi",
-          effectiveExecutionPolicy: "guarded",
-          executionPolicySource: "default",
-          name: "test",
-        },
-        () => {
-          writeCount++;
-        },
+        { effectiveCli: "pi", effectiveExecutionPolicy: "guarded", executionPolicySource: "default", name: "test" },
+        { collector },
       );
-      assert.equal(writeCount, 0, "default policy should not warn");
+      assert.equal(collector.drain().length, 0, "default policy should not warn");
     });
   });
 });

@@ -76,6 +76,7 @@ import {
   buildPiPromptArgs,
 } from "./launch/launch-spec.ts";
 import { composePanePrompt, resolvePaneCompletionProtocol, assertNever } from "./launch/pane-completion-protocol.ts";
+import { emitDiagnostic, registerAmbientUi, type DiagnosticContext } from "./diagnostics/diagnostics.ts";
 import {
   createStatusState,
   type SubagentStatusState,
@@ -483,14 +484,7 @@ export function unregisterHeadlessSubagent(id: string): void {
 
 /** Latest ExtensionContext from session_start, used for widget updates. */
 let latestCtx: ExtensionContext | null = null;
-
-function emitRuntimeWarning(message: string): void {
-  if (latestCtx?.hasUI) {
-    latestCtx.ui.notify(message.replace(/\n+$/, ""), "warning");
-    return;
-  }
-  process.stderr.write(message);
-}
+registerAmbientUi(() => latestCtx);
 
 /** Interval timer for widget re-renders. */
 let widgetInterval: ReturnType<typeof setInterval> | null = null;
@@ -957,12 +951,14 @@ export function buildClaudeCmdParts(input: ClaudeCmdInputs): string[] {
 export function warnClaudeSkillsDropped(
   subagentName: string,
   effectiveSkills: string | undefined,
-  write: (msg: string) => void = (m) => void process.stderr.write(m),
+  context?: DiagnosticContext,
 ): void {
   if (!effectiveSkills || effectiveSkills.trim() === "") return;
-  write(
-    `[pi-interactive-subagent] ${subagentName}: ignoring skills=${effectiveSkills} on Claude path — not supported in v1\n`,
-  );
+  emitDiagnostic({
+    code: "skills-dropped",
+    audience: { human: true, structured: true },
+    message: `[pi-interactive-subagent] ${subagentName}: ignoring skills=${effectiveSkills} on Claude path — not supported in v1\n`,
+  }, context);
 }
 
 export function warnCodexUnsupportedFeatures(
@@ -970,19 +966,31 @@ export function warnCodexUnsupportedFeatures(
   effectiveSkills: string | undefined,
   effectiveTools: string | undefined,
   systemPromptMode?: "append" | "replace",
-  write: (msg: string) => void = (m) => void process.stderr.write(m),
+  context?: DiagnosticContext,
 ): void {
   if (effectiveSkills && effectiveSkills.trim() !== "")
-    write(`[pi-interactive-subagent] ${subagentName}: ignoring skills=${effectiveSkills} on Codex path — not supported in v1\n`);
+    emitDiagnostic({
+      code: "skills-dropped",
+      audience: { human: true, structured: true },
+      message: `[pi-interactive-subagent] ${subagentName}: ignoring skills=${effectiveSkills} on Codex path — not supported in v1\n`,
+    }, context);
   if (effectiveTools && effectiveTools.trim() !== "")
-    write(`[pi-interactive-subagent] ${subagentName}: ignoring tools=${effectiveTools} on Codex path — pi tool allowlists are not applied (the internal subagent_done MCP tool is always available)\n`);
+    emitDiagnostic({
+      code: "tools-dropped",
+      audience: { human: true, structured: true },
+      message: `[pi-interactive-subagent] ${subagentName}: ignoring tools=${effectiveTools} on Codex path — pi tool allowlists are not applied (the internal subagent_done MCP tool is always available)\n`,
+    }, context);
   // Codex has no system-prompt channel, so identity always rides the task body
   // (see identity-delivery.ts). `append` is naturally additive and needs no
   // note; `replace` cannot be honored exactly (there is no base-instruction set
   // to replace on Codex), so identity is delivered additively in the body and we
   // say so once, here, rather than silently degrading the request.
   if (systemPromptMode === "replace")
-    write(`[pi-interactive-subagent] ${subagentName}: system-prompt: replace is not representable on Codex (no base-instruction channel to replace) — identity was delivered additively in the task body\n`);
+    emitDiagnostic({
+      code: "codex-system-prompt-replace",
+      audience: { human: true, structured: true },
+      message: `[pi-interactive-subagent] ${subagentName}: system-prompt: replace is not representable on Codex (no base-instruction channel to replace) — identity was delivered additively in the task body\n`,
+    }, context);
 }
 
 // Re-export shellEscape so tests can verify exact argv encoding against the
@@ -1042,7 +1050,7 @@ export async function launchSubagent(
   if (!sessionFile) throw new Error("No session file");
 
   const spec = resolveLaunchSpec(params, ctx);
-  warnGuardedPolicyUnsupported(spec, emitRuntimeWarning);
+  warnGuardedPolicyUnsupported(spec);
 
   // Use pre-created surface (parallel mode) or create a new one.
   // For new surfaces, pause briefly so the shell is ready before sending the command.
@@ -1061,7 +1069,7 @@ export async function launchSubagent(
 
     // Claude CLI has no skills equivalent; warn before building argv so pane
     // and headless use identical wording.
-    warnClaudeSkillsDropped(params.name, spec.effectiveSkills, emitRuntimeWarning);
+    warnClaudeSkillsDropped(params.name, spec.effectiveSkills);
 
     const cmdParts = buildClaudeCmdParts({
       sentinelFile,
@@ -1131,7 +1139,7 @@ export async function launchSubagent(
   // ── Codex CLI path ──
   if (spec.paneBackend === "codex") {
     const sentinelFile = `/tmp/pi-codex-${id}-done`;
-    warnCodexUnsupportedFeatures(params.name, spec.effectiveSkills, spec.effectiveTools, spec.systemPromptMode, emitRuntimeWarning);
+    warnCodexUnsupportedFeatures(params.name, spec.effectiveSkills, spec.effectiveTools, spec.systemPromptMode);
     // Codex completion is tool-first and delivered via the task prompt: the
     // neutral core (identity + task) plus the Codex seam variant resolved from
     // the finite paneBackend. No Claude final-message-first wording reaches here.

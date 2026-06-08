@@ -1,6 +1,7 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { selectBackend, __test__ } from "../../src/backends/select.ts";
+import { __test__ as diag } from "../../src/diagnostics/diagnostics.ts";
 
 const SAVED_KEYS = [
   "PI_SUBAGENT_MODE",
@@ -100,5 +101,27 @@ describe("selectBackend", () => {
     process.env.PI_SUBAGENT_MODE = "bogus";
     __test__.setDetectMux(() => true);
     assert.equal(selectBackend(), "pane");
+  });
+
+  it("routes the invalid-mode warning through the dispatcher (UI when present, stderr otherwise), dedupe intact", () => {
+    // stderr path (no UI): the existing resolver returns the null latestCtx.
+    process.env.PI_SUBAGENT_MODE = "bogus";
+    selectBackend();
+    assert.ok(stderrCapture.includes('PI_SUBAGENT_MODE="bogus" invalid'));
+
+    // UI path: swap in an ambient UI; dedupe means a NEW invalid value is needed.
+    const prev = diag.getAmbientUi();
+    const notes: Array<{ m: string; t?: string }> = [];
+    diag.setAmbientUi(() => ({ hasUI: true, ui: { notify: (m, t) => notes.push({ m, t }) } }));
+    try {
+      process.env.PI_SUBAGENT_MODE = "bogus2";
+      selectBackend();
+      assert.equal(notes.length, 1);
+      assert.equal(notes[0].t, "warning");
+      assert.ok(notes[0].m.includes('PI_SUBAGENT_MODE="bogus2" invalid'));
+      assert.equal(notes[0].m.endsWith("\n"), false, "UI text has trailing newline stripped");
+    } finally {
+      diag.setAmbientUi(prev);
+    }
   });
 });

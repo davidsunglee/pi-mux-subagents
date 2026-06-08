@@ -1,4 +1,5 @@
 import { detectMux as realDetectMux } from "../mux/index.ts";
+import { emitDiagnostic } from "../diagnostics/diagnostics.ts";
 
 const warnedInvalidValues = new Set<string>();
 
@@ -15,10 +16,13 @@ export function selectBackend(): BackendKind {
   if (raw === "headless") return "headless";
   if (raw !== "auto" && !warnedInvalidValues.has(raw)) {
     warnedInvalidValues.add(raw);
-    process.stderr.write(
-      `[pi-interactive-subagent] PI_SUBAGENT_MODE="${raw}" invalid; ` +
+    emitDiagnostic({
+      code: "invalid-subagent-mode",
+      audience: { human: true },
+      message:
+        `[pi-interactive-subagent] PI_SUBAGENT_MODE="${raw}" invalid; ` +
         `falling back to auto (valid: pane | headless | auto)\n`,
-    );
+    });
   }
   return detectMuxImpl() ? "pane" : "headless";
 }
