@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { composePanePrompt, resolvePaneCompletionProtocol, type PaneBackend } from "./pane-completion-protocol.ts";
+import { resolveIdentityDelivery, identityRoutesToSystemPrompt } from "./identity-delivery.ts";
 
 /**
  * Launch-spec normalization for subagent launches.
@@ -663,7 +664,27 @@ export function resolveLaunchSpec(
       ? `${trimmedBody}\n\n${trimmedSystemPrompt}`
       : (trimmedBody ?? trimmedSystemPrompt ?? null);
   const systemPromptMode = agentDefs?.systemPromptMode;
-  const identityInSystemPrompt = !!(systemPromptMode && identity);
+
+  // Finite pane-backend discriminator (ties effectiveCli → the completion seam).
+  // Unknown / headless-only CLIs fall through to "pi", matching the legacy pane
+  // dispatch (anything not "claude"/"codex" launched as pi). A genuinely new
+  // pane backend is added by extending PaneBackend (which breaks the build until
+  // a variant + dispatch branch exist), never via an ad-hoc effectiveCli string.
+  const paneBackend: PaneBackend =
+    effectiveCli === "claude" ? "claude" : effectiveCli === "codex" ? "codex" : "pi";
+
+  // Identity delivery is a first-class, per-backend capability (see
+  // identity-delivery.ts), parallel to the completion-protocol seam. Whether the
+  // composed identity is routed through a backend's system-prompt channel (a CLI
+  // flag, out-of-band from the body) or carried in the task body derives from
+  // the backend's declared policy — NOT from the bare `systemPromptMode`. Codex
+  // has no system-prompt channel, so its identity always rides the task body;
+  // Claude always routes to its flag; pi is hybrid (flag when a mode is set,
+  // else the role block). This is the fix for Codex silently dropping identity
+  // whenever an agent declared `system-prompt: append|replace`.
+  const identityInSystemPrompt =
+    !!identity &&
+    identityRoutesToSystemPrompt(resolveIdentityDelivery(paneBackend), systemPromptMode);
   const roleBlock = identity && !identityInSystemPrompt ? `\n\n${identity}` : "";
   const fullTask = inheritsConversationContext
     ? params.task
@@ -673,14 +694,6 @@ export function resolveLaunchSpec(
   const claudeTaskBody = inheritsConversationContext
     ? params.task
     : `${modeHint}\n\n${params.task}\n\n${summaryInstruction}`;
-
-  // Finite pane-backend discriminator (ties effectiveCli → the completion seam).
-  // Unknown / headless-only CLIs fall through to "pi", matching the legacy pane
-  // dispatch (anything not "claude"/"codex" launched as pi). A genuinely new
-  // pane backend is added by extending PaneBackend (which breaks the build until
-  // a variant + dispatch branch exist), never via an ad-hoc effectiveCli string.
-  const paneBackend: PaneBackend =
-    effectiveCli === "claude" ? "claude" : effectiveCli === "codex" ? "codex" : "pi";
 
   // CLI-neutral core (identity + task, no completion wording). Mirrors
   // fullTask's roleBlock handling so Codex identity delivery is unchanged.

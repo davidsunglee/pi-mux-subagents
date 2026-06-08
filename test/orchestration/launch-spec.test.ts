@@ -434,6 +434,131 @@ describe("resolveLaunchSpec", () => {
     }
   });
 
+  describe("Codex identity delivery (no system-prompt channel)", () => {
+    function seedCodexAgent(name: string, frontmatter: string, body: string) {
+      const root = mkdtempSync(join(tmpdir(), "ls-codex-identity-"));
+      mkdirSync(join(root, ".pi", "agents"), { recursive: true });
+      writeFileSync(
+        join(root, ".pi", "agents", `${name}.md`),
+        `---\n${frontmatter}\n---\n${body}\n`,
+        "utf8",
+      );
+      return root;
+    }
+
+    it("system-prompt: append on Codex keeps identity in the task body (pane neutralCore + headless fullTask)", () => {
+      const root = seedCodexAgent(
+        "codex-append",
+        "cli: codex\nsystem-prompt: append",
+        "CODEX_AGENT_BODY_APPEND",
+      );
+      try {
+        const spec = resolveLaunchSpec(
+          { name: "A", task: "do-task", agent: "codex-append", cwd: root, systemPrompt: "CALLER_CODEX_APPEND" },
+          baseCtx,
+        );
+        assert.equal(spec.paneBackend, "codex");
+        assert.equal(spec.systemPromptMode, "append");
+        assert.equal(spec.identityInSystemPrompt, false,
+          "Codex has no system-prompt channel → identity must stay in the task body even with system-prompt: append");
+        // Pane path consumes neutralCore; headless path writes fullTask to stdin.
+        assert.match(spec.neutralCore, /CODEX_AGENT_BODY_APPEND/,
+          "Codex pane neutralCore must carry the agent body");
+        assert.match(spec.neutralCore, /CALLER_CODEX_APPEND/,
+          "Codex pane neutralCore must carry the per-call systemPrompt");
+        assert.match(spec.fullTask, /CODEX_AGENT_BODY_APPEND/,
+          "Codex headless fullTask must carry the agent body");
+        assert.match(spec.fullTask, /CALLER_CODEX_APPEND/,
+          "Codex headless fullTask must carry the per-call systemPrompt");
+        // No duplication: body appears exactly once in each delivered prompt.
+        assert.equal((spec.neutralCore.match(/CODEX_AGENT_BODY_APPEND/g) || []).length, 1);
+        assert.equal((spec.fullTask.match(/CODEX_AGENT_BODY_APPEND/g) || []).length, 1);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("system-prompt: replace on Codex delivers identity additively in the task body", () => {
+      const root = seedCodexAgent(
+        "codex-replace",
+        "cli: codex\nsystem-prompt: replace",
+        "CODEX_AGENT_BODY_REPLACE",
+      );
+      try {
+        const spec = resolveLaunchSpec(
+          { name: "R", task: "do-task", agent: "codex-replace", cwd: root },
+          baseCtx,
+        );
+        assert.equal(spec.paneBackend, "codex");
+        assert.equal(spec.systemPromptMode, "replace");
+        assert.equal(spec.identityInSystemPrompt, false,
+          "Codex replace is best-effort additive: identity stays in the task body");
+        assert.match(spec.neutralCore, /CODEX_AGENT_BODY_REPLACE/);
+        assert.match(spec.fullTask, /CODEX_AGENT_BODY_REPLACE/);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("delivers a test-runner-shaped artifact contract from the body to the Codex prompt", () => {
+      // Models pi-flow's test-runner: the artifact-format contract lives in the
+      // agent body and is routed through system-prompt: append. On Codex the
+      // contract must survive into the delivered prompt (pane + headless).
+      const TEST_RUNNER_BODY = [
+        "Emit your result artifact in EXACTLY this format:",
+        "",
+        "COMMAND: <the test command you ran>",
+        "EXIT_CODE: <numeric exit code>",
+        "BEGIN_FAILING_IDENTIFIERS",
+        "<one failing test id per line>",
+        "END_FAILING_IDENTIFIERS",
+        "",
+        "--- RAW RUN OUTPUT BELOW ---",
+        "<verbatim output>",
+      ].join("\n");
+      const root = seedCodexAgent(
+        "codex-test-runner",
+        "cli: codex\nsystem-prompt: append\nauto-exit: true",
+        TEST_RUNNER_BODY,
+      );
+      try {
+        const spec = resolveLaunchSpec(
+          { name: "TR", task: "run the tests", agent: "codex-test-runner", cwd: root },
+          baseCtx,
+        );
+        assert.equal(spec.identityInSystemPrompt, false);
+        for (const marker of ["COMMAND:", "EXIT_CODE:", "END_FAILING_IDENTIFIERS", "--- RAW RUN OUTPUT BELOW ---"]) {
+          assert.ok(spec.neutralCore.includes(marker),
+            `Codex pane prompt must include artifact marker ${JSON.stringify(marker)}`);
+          assert.ok(spec.fullTask.includes(marker),
+            `Codex headless prompt must include artifact marker ${JSON.stringify(marker)}`);
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("pi keeps mode-gated routing: system-prompt: append routes identity to the flag (unchanged)", () => {
+      const root = seedCodexAgent(
+        "pi-append",
+        "model: m\nsystem-prompt: append",
+        "PI_AGENT_BODY_APPEND",
+      );
+      try {
+        const spec = resolveLaunchSpec(
+          { name: "P", task: "do-task", agent: "pi-append", cwd: root },
+          baseCtx,
+        );
+        assert.equal(spec.paneBackend, "pi");
+        assert.equal(spec.identityInSystemPrompt, true,
+          "pi retains its hybrid routing: mode set → identity via the system-prompt flag, not the body");
+        assert.doesNotMatch(spec.fullTask, /PI_AGENT_BODY_APPEND/);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
   it("exposes claudeTaskBody without the roleBlock for Claude backends to consume", () => {
     const blank = resolveLaunchSpec(
       { name: "X", task: "do-task", systemPrompt: "you are Y" },

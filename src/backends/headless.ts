@@ -736,7 +736,7 @@ async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
   let structuredError: string | undefined;
   const rawLines: string[] = []; // teed JSONL for archival
 
-  warnCodexUnsupportedFeatures(spec.name, spec.effectiveSkills, spec.effectiveTools);
+  warnCodexUnsupportedFeatures(spec.name, spec.effectiveSkills, spec.effectiveTools, spec.systemPromptMode);
 
   const cwd = spec.effectiveCwd ?? ctx.cwd;
   const outFile = join(spec.artifactDir, "codex", `${id}-last-message.txt`);
@@ -774,7 +774,10 @@ async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
     }
 
     // Deliver the prompt via stdin. spec.fullTask carries the identity roleBlock
-    // — Codex has no system-prompt flag, so the identity rides in the prompt body.
+    // — Codex declares "no system-prompt channel" in the identity-delivery seam
+    // (identity-delivery.ts), so resolveLaunchSpec keeps identityInSystemPrompt
+    // false for Codex and the identity ALWAYS rides the prompt body here, even
+    // when the agent sets system-prompt: append|replace.
     try {
       proc.stdin!.write(spec.fullTask);
       proc.stdin!.end();

@@ -130,4 +130,35 @@ describe("Codex pane prompt — launch argv", () => {
     assert.ok(cmd.includes("subagent_done(message="));
     assert.doesNotMatch(cmd, /FINAL assistant message/);
   });
+
+  it("includes the agent body in the pane command even when system-prompt: append is set (identity not dropped)", async () => {
+    const cmd = await captureCodexLaunchCommand(
+      "codex-append-identity",
+      "---\nauto-exit: true\ncli: codex\nsystem-prompt: append\n---\nCODEX_PANE_BODY_MARKER_7f3a2",
+    );
+    assert.ok(
+      cmd.includes("CODEX_PANE_BODY_MARKER_7f3a2"),
+      `Codex pane command must carry the agent body when system-prompt: append is set; got: ${cmd}`,
+    );
+    // Composes with the completion seam: identity + tool-first completion wording.
+    assert.ok(cmd.includes("subagent_done(message="));
+  });
+
+  it("delivers a test-runner-shaped artifact contract into the pane command body", async () => {
+    const body = [
+      "Emit your result in EXACTLY this format:",
+      "COMMAND: <cmd>",
+      "EXIT_CODE: <code>",
+      "BEGIN_FAILING_IDENTIFIERS",
+      "END_FAILING_IDENTIFIERS",
+      "--- RAW RUN OUTPUT BELOW ---",
+    ].join("\n");
+    const cmd = await captureCodexLaunchCommand(
+      "codex-test-runner-pane",
+      `---\nauto-exit: true\ncli: codex\nsystem-prompt: append\n---\n${body}`,
+    );
+    for (const marker of ["COMMAND:", "EXIT_CODE:", "END_FAILING_IDENTIFIERS", "RAW RUN OUTPUT BELOW"]) {
+      assert.ok(cmd.includes(marker), `pane command must include artifact marker ${JSON.stringify(marker)}; got: ${cmd}`);
+    }
+  });
 });

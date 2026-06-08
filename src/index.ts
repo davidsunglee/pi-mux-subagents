@@ -969,12 +969,20 @@ export function warnCodexUnsupportedFeatures(
   subagentName: string,
   effectiveSkills: string | undefined,
   effectiveTools: string | undefined,
+  systemPromptMode?: "append" | "replace",
   write: (msg: string) => void = (m) => void process.stderr.write(m),
 ): void {
   if (effectiveSkills && effectiveSkills.trim() !== "")
     write(`[pi-interactive-subagent] ${subagentName}: ignoring skills=${effectiveSkills} on Codex path — not supported in v1\n`);
   if (effectiveTools && effectiveTools.trim() !== "")
     write(`[pi-interactive-subagent] ${subagentName}: ignoring tools=${effectiveTools} on Codex path — pi tool allowlists are not applied (the internal subagent_done MCP tool is always available)\n`);
+  // Codex has no system-prompt channel, so identity always rides the task body
+  // (see identity-delivery.ts). `append` is naturally additive and needs no
+  // note; `replace` cannot be honored exactly (there is no base-instruction set
+  // to replace on Codex), so identity is delivered additively in the body and we
+  // say so once, here, rather than silently degrading the request.
+  if (systemPromptMode === "replace")
+    write(`[pi-interactive-subagent] ${subagentName}: system-prompt: replace is not representable on Codex (no base-instruction channel to replace) — identity was delivered additively in the task body\n`);
 }
 
 // Re-export shellEscape so tests can verify exact argv encoding against the
@@ -1123,7 +1131,7 @@ export async function launchSubagent(
   // ── Codex CLI path ──
   if (spec.paneBackend === "codex") {
     const sentinelFile = `/tmp/pi-codex-${id}-done`;
-    warnCodexUnsupportedFeatures(params.name, spec.effectiveSkills, spec.effectiveTools, emitRuntimeWarning);
+    warnCodexUnsupportedFeatures(params.name, spec.effectiveSkills, spec.effectiveTools, spec.systemPromptMode, emitRuntimeWarning);
     // Codex completion is tool-first and delivered via the task prompt: the
     // neutral core (identity + task) plus the Codex seam variant resolved from
     // the finite paneBackend. No Claude final-message-first wording reaches here.
