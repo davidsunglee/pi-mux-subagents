@@ -3,6 +3,7 @@ import { makeHeadlessBackend } from "../backends/headless.ts";
 import { makePaneBackend } from "../backends/pane.ts";
 import { selectBackend } from "../backends/select.ts";
 import type { Backend, BackendLaunchParams } from "../backends/types.ts";
+import type { DiagnosticContext } from "../diagnostics/diagnostics.ts";
 import {
   registerHeadlessSubagent,
   updateHeadlessSubagentUsage,
@@ -45,9 +46,10 @@ export function makeDefaultDeps(ctx: {
       task: OrchestrationTask,
       defaultFocus: boolean,
       signal?: AbortSignal,
+      diagnostics?: DiagnosticContext,
     ): Promise<LaunchedHandle> {
       const params: BackendLaunchParams = task;
-      const handle = await backend.launch(params, defaultFocus, signal);
+      const handle = await backend.launch(params, defaultFocus, signal, diagnostics);
       if (isHeadless) {
         const agentDefs = task.agent ? loadAgentDefaults(task.agent) : null;
         const interactive = resolveEffectiveInteractive({ ...task, name: handle.name }, agentDefs);

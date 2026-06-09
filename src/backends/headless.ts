@@ -17,6 +17,7 @@ import { seedSubagentSessionFile } from "../launch/session.ts";
 import { buildClaudeHeadlessArgs, parseClaudeStreamEvent, parseClaudeResult } from "./claude-stream.ts";
 import { buildCodexExecArgs, parseCodexEvent, parseCodexUsage, extractCodexSessionId, parseCodexError } from "./codex-stream.ts";
 import { warnClaudeSkillsDropped, warnCodexUnsupportedFeatures } from "../index.ts";
+import type { DiagnosticContext } from "../diagnostics/diagnostics.ts";
 import type {
   Backend,
   BackendLaunchParams,
@@ -174,6 +175,7 @@ export function makeHeadlessBackend(ctx: {
       params: BackendLaunchParams,
       _defaultFocus: boolean,
       signal?: AbortSignal,
+      diagnostics?: DiagnosticContext,
     ): Promise<LaunchedHandle> {
       const id = Math.random().toString(16).slice(2, 10);
       const startTime = Date.now();
@@ -202,7 +204,7 @@ export function makeHeadlessBackend(ctx: {
         },
         ctx,
       );
-      warnGuardedPolicyUnsupported(spec);
+      warnGuardedPolicyUnsupported(spec, diagnostics);
 
       const entry: HeadlessLaunch = {
         id,
@@ -224,10 +226,10 @@ export function makeHeadlessBackend(ctx: {
 
       entry.promise =
         spec.effectiveCli === "claude"
-          ? runClaudeHeadless({ id, spec, startTime, abort: abort.signal, ctx, emitPartial: emit })
+          ? runClaudeHeadless({ id, spec, startTime, abort: abort.signal, ctx, emitPartial: emit, diagnostics })
           : spec.effectiveCli === "codex"
-            ? runCodexHeadless({ id, spec, startTime, abort: abort.signal, ctx, emitPartial: emit })
-            : runPiHeadless({ id, spec, startTime, abort: abort.signal, ctx, emitPartial: emit });
+            ? runCodexHeadless({ id, spec, startTime, abort: abort.signal, ctx, emitPartial: emit, diagnostics })
+            : runPiHeadless({ id, spec, startTime, abort: abort.signal, ctx, emitPartial: emit, diagnostics });
 
       launches.set(id, entry);
       return {
@@ -298,6 +300,7 @@ interface RunParams {
   abort: AbortSignal;
   ctx: { sessionManager: ExtensionContext["sessionManager"]; cwd: string };
   emitPartial: (snapshot: BackendResult) => void;
+  diagnostics?: DiagnosticContext;
 }
 
 function makeAbortHandler(proc: ChildProcess, isExited: () => boolean): () => void {
@@ -549,7 +552,7 @@ async function runClaudeHeadless(p: RunParams): Promise<BackendResult> {
   let terminalResult: ReturnType<typeof parseClaudeResult> | null = null;
   let sessionId: string | undefined;
 
-  warnClaudeSkillsDropped(spec.name, spec.effectiveSkills);
+  warnClaudeSkillsDropped(spec.name, spec.effectiveSkills, p.diagnostics);
 
   // Claude always uses direct task delivery — the Claude CLI prompt argument does
   // not support @file substitution, so spec.taskDelivery is ignored on this path.
@@ -736,7 +739,7 @@ async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
   let structuredError: string | undefined;
   const rawLines: string[] = []; // teed JSONL for archival
 
-  warnCodexUnsupportedFeatures(spec.name, spec.effectiveSkills, spec.effectiveTools, spec.systemPromptMode);
+  warnCodexUnsupportedFeatures(spec.name, spec.effectiveSkills, spec.effectiveTools, spec.systemPromptMode, p.diagnostics);
 
   const cwd = spec.effectiveCwd ?? ctx.cwd;
   const outFile = join(spec.artifactDir, "codex", `${id}-last-message.txt`);

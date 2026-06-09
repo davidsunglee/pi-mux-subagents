@@ -11,6 +11,7 @@ import type {
   BackendWatchHooks,
   LaunchedHandle,
 } from "./types.ts";
+import type { DiagnosticContext } from "../diagnostics/diagnostics.ts";
 
 /**
  * Test seam: lets unit tests substitute the heavy `launchSubagent` /
@@ -37,6 +38,7 @@ export function makePaneBackend(
       params: BackendLaunchParams,
       defaultFocus: boolean,
       _signal?: AbortSignal,
+      diagnostics?: DiagnosticContext,
     ): Promise<LaunchedHandle> {
       const resolvedFocus = params.focus ?? defaultFocus;
       const running = await launchSubagent(
@@ -57,6 +59,7 @@ export function makePaneBackend(
           executionPolicy: params.executionPolicy,
         },
         ctx,
+        { diagnostics },
       );
       handleToRunning.set(running.id, running);
       // Claude pane launches must not advertise the unused pi session-file

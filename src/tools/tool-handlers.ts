@@ -454,6 +454,7 @@ export function toPublicResults(results: OrchestrationResult[]): OrchestratedTas
     error: r.error,
     usage: r.usage,
     transcript: r.transcript,
+    ...(r.warnings ? { warnings: r.warnings } : {}),
   }));
 }
 

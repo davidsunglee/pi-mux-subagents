@@ -1041,7 +1041,7 @@ export function buildPaneCdPrefix(
 export async function launchSubagent(
   params: SubagentParamsType,
   ctx: { sessionManager: { getSessionFile(): string | null; getSessionId(): string; getSessionDir(): string }; cwd: string },
-  options?: { surface?: string },
+  options?: { surface?: string; diagnostics?: DiagnosticContext },
 ): Promise<RunningSubagent> {
   const startTime = Date.now();
   const id = Math.random().toString(16).slice(2, 10);
@@ -1050,7 +1050,7 @@ export async function launchSubagent(
   if (!sessionFile) throw new Error("No session file");
 
   const spec = resolveLaunchSpec(params, ctx);
-  warnGuardedPolicyUnsupported(spec);
+  warnGuardedPolicyUnsupported(spec, options?.diagnostics);
 
   // Use pre-created surface (parallel mode) or create a new one.
   // For new surfaces, pause briefly so the shell is ready before sending the command.
@@ -1069,7 +1069,7 @@ export async function launchSubagent(
 
     // Claude CLI has no skills equivalent; warn before building argv so pane
     // and headless use identical wording.
-    warnClaudeSkillsDropped(params.name, spec.effectiveSkills);
+    warnClaudeSkillsDropped(params.name, spec.effectiveSkills, options?.diagnostics);
 
     const cmdParts = buildClaudeCmdParts({
       sentinelFile,
@@ -1139,7 +1139,7 @@ export async function launchSubagent(
   // ── Codex CLI path ──
   if (spec.paneBackend === "codex") {
     const sentinelFile = `/tmp/pi-codex-${id}-done`;
-    warnCodexUnsupportedFeatures(params.name, spec.effectiveSkills, spec.effectiveTools, spec.systemPromptMode);
+    warnCodexUnsupportedFeatures(params.name, spec.effectiveSkills, spec.effectiveTools, spec.systemPromptMode, options?.diagnostics);
     // Codex completion is tool-first and delivered via the task prompt: the
     // neutral core (identity + task) plus the Codex seam variant resolved from
     // the finite paneBackend. No Claude final-message-first wording reaches here.

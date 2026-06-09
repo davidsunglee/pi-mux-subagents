@@ -1,4 +1,5 @@
 import type { LaunchedHandle, OrchestrationTask } from "../orchestration/types.ts";
+import type { DiagnosticContext } from "../diagnostics/diagnostics.ts";
 
 export type { LaunchedHandle, OrchestrationTask };
 
@@ -79,6 +80,7 @@ export interface Backend {
     params: BackendLaunchParams,
     defaultFocus: boolean,
     signal?: AbortSignal,
+    diagnostics?: DiagnosticContext,
   ): Promise<LaunchedHandle>;
   watch(
     handle: LaunchedHandle,

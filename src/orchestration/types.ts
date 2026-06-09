@@ -4,6 +4,7 @@ import type {
   TranscriptMessage,
   UsageStats,
 } from "../backends/types.ts";
+import type { DiagnosticContext } from "../diagnostics/diagnostics.ts";
 export type { TranscriptMessage, UsageStats };
 
 export const OrchestrationTaskSchema = Type.Object({
@@ -61,6 +62,8 @@ export interface OrchestrationResult {
   index?: number;
   sessionKey?: string;
   ping?: { name: string; message: string };
+  /** Structured-audience diagnostic messages collected during this task's launch. */
+  warnings?: string[];
 }
 
 /**
@@ -81,6 +84,8 @@ export interface OrchestratedTaskResult {
   error?: string;
   usage?: UsageStats;
   transcript?: TranscriptMessage[];
+  /** Structured-audience diagnostic messages collected during this task's launch. */
+  warnings?: string[];
 }
 
 /**
@@ -118,6 +123,7 @@ export interface LauncherDeps {
     task: OrchestrationTask,
     defaultFocus: boolean,
     signal?: AbortSignal,
+    diagnostics?: DiagnosticContext,
   ): Promise<LaunchedHandle>;
   waitForCompletion(
     handle: LaunchedHandle,
