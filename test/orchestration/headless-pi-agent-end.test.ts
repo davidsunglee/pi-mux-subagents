@@ -132,4 +132,83 @@ describe("runPiHeadless agent_end race-closer", () => {
     assert.equal(result.usage?.output, 2);
     assert.equal(result.transcript?.filter((msg: any) => msg.role === "assistant").length, 1);
   });
+
+  it("keeps distinct assistant turns that reuse the same content when only agent_end loses metadata", async () => {
+    backendModule.__test__.setSpawn(((_cmd: string, _args: string[], _opts: any) => {
+      const proc = new EventEmitter() as any;
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      proc.kill = () => true;
+      queueMicrotask(() => {
+        const firstAssistant = {
+          role: "assistant",
+          content: [{ type: "text", text: "OK" }],
+          usage: {
+            input: 1,
+            output: 2,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 3,
+            cost: { total: 0.111 },
+          },
+          stopReason: "stop",
+        };
+        const secondAssistantFromMessageEnd = {
+          role: "assistant",
+          timestamp: "2026-06-09T19:00:01.000Z",
+          content: [{ type: "text", text: "OK" }],
+          usage: {
+            input: 10,
+            output: 20,
+            cacheRead: 30,
+            cacheWrite: 40,
+            totalTokens: 50,
+            cost: { total: 0.222 },
+          },
+          stopReason: "stop",
+        };
+        const secondAssistantFromAgentEnd = {
+          role: "assistant",
+          content: [{ type: "text", text: "OK" }],
+          stopReason: "stop",
+        };
+        proc.stdout.emit("data", Buffer.from(JSON.stringify({
+          type: "message_end",
+          message: firstAssistant,
+        }) + "\n"));
+        proc.stdout.emit("data", Buffer.from(JSON.stringify({
+          type: "message_end",
+          message: secondAssistantFromMessageEnd,
+        }) + "\n"));
+        proc.stdout.emit("data", Buffer.from(JSON.stringify({
+          type: "agent_end",
+          messages: [secondAssistantFromAgentEnd],
+          willRetry: false,
+        }) + "\n"));
+        proc.emit("exit", 0);
+        proc.emit("close", 0);
+      });
+      return proc;
+    }) as any);
+
+    const backend = backendModule.makeHeadlessBackend({
+      sessionManager: {
+        getSessionFile: () => join(root, "parent.jsonl"),
+        getSessionId: () => "parent",
+        getSessionDir: () => root,
+      } as any,
+      cwd: root,
+    });
+
+    const handle = await backend.launch({ name: "t", task: "Reply OK twice", cli: "pi" }, false);
+    const result = await backend.watch(handle);
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.error, undefined);
+    assert.equal(result.finalMessage, "OK");
+    assert.equal(result.usage?.turns, 2);
+    assert.equal(result.usage?.input, 11);
+    assert.equal(result.usage?.output, 22);
+    assert.equal(result.transcript?.filter((msg: any) => msg.role === "assistant").length, 2);
+  });
 });

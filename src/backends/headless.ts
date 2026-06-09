@@ -435,23 +435,36 @@ async function runPiHeadless(p: RunParams): Promise<BackendResult> {
     };
 
     const seenAssistantKeys = new Set<string>();
-    const assistantKeys = (msg: PiStreamMessage): string[] => {
+    const seenAssistantTerminalFallbackKeys = new Set<string>();
+    const assistantStrongKeys = (msg: PiStreamMessage): string[] => {
       const anyMsg = msg as any;
       const contentKey = JSON.stringify(msg.content ?? []);
       const keys = [
-        `content:${contentKey}:stop:${anyMsg.stopReason ?? ""}`,
         `content:${contentKey}:usage:${JSON.stringify(anyMsg.usage ?? null)}:stop:${anyMsg.stopReason ?? ""}`,
       ];
       if (anyMsg.responseId) keys.push(`response:${anyMsg.responseId}`);
       if (anyMsg.timestamp) keys.push(`timestamp:${anyMsg.timestamp}:content:${contentKey}`);
       return keys;
     };
+    const assistantTerminalFallbackKey = (msg: PiStreamMessage): string => {
+      const anyMsg = msg as any;
+      return `content:${JSON.stringify(msg.content ?? [])}:stop:${anyMsg.stopReason ?? ""}`;
+    };
 
-    const recordPiMessage = (msg: PiStreamMessage, shouldEmit: boolean): void => {
+    const recordPiMessage = (
+      msg: PiStreamMessage,
+      shouldEmit: boolean,
+      source: "message_end" | "tool_result_end" | "turn_end" | "agent_end",
+    ): void => {
       if (msg.role === "assistant") {
-        const keys = assistantKeys(msg);
-        if (keys.some((key) => seenAssistantKeys.has(key))) return;
-        for (const key of keys) seenAssistantKeys.add(key);
+        const strongKeys = assistantStrongKeys(msg);
+        const terminalFallbackKey = assistantTerminalFallbackKey(msg);
+        const seen = strongKeys.some((key) => seenAssistantKeys.has(key))
+          || ((source === "turn_end" || source === "agent_end")
+            && seenAssistantTerminalFallbackKeys.has(terminalFallbackKey));
+        if (seen) return;
+        for (const key of strongKeys) seenAssistantKeys.add(key);
+        seenAssistantTerminalFallbackKeys.add(terminalFallbackKey);
       }
 
       transcript.push(projectPiMessageToTranscript(msg));
@@ -479,16 +492,16 @@ async function runPiHeadless(p: RunParams): Promise<BackendResult> {
       if (event.type === "message_end" && event.message) {
         // Emit a partial snapshot on each message_end (not on every delta line,
         // which would spam). Reflects accumulated transcript + usage so far.
-        recordPiMessage(event.message as PiStreamMessage, true);
+        recordPiMessage(event.message as PiStreamMessage, true, "message_end");
       } else if (event.type === "tool_result_end" && event.message) {
-        recordPiMessage(event.message as PiStreamMessage, false);
+        recordPiMessage(event.message as PiStreamMessage, false, "tool_result_end");
       } else if (event.type === "turn_end" && event.message) {
         // `turn_end` is a terminal stream event from pi. Normally the preceding
         // assistant message_end carries the same message; recordPiMessage
         // deduplicates by response id and therefore acts as a race-closer when
         // message_end was missed.
         terminalEvent = true;
-        recordPiMessage(event.message as PiStreamMessage, true);
+        recordPiMessage(event.message as PiStreamMessage, true, "turn_end");
       } else if (event.type === "agent_end") {
         // Headless completion should not depend on seeing every message_end
         // line. Under load, the process can still emit agent_end with the final
@@ -497,7 +510,7 @@ async function runPiHeadless(p: RunParams): Promise<BackendResult> {
         terminalEvent = true;
         if (Array.isArray(event.messages)) {
           for (const msg of event.messages as PiStreamMessage[]) {
-            if (msg.role === "assistant") recordPiMessage(msg, true);
+            if (msg.role === "assistant") recordPiMessage(msg, true, "agent_end");
           }
         }
       }
