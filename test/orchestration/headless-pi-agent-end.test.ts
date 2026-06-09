@@ -271,4 +271,65 @@ describe("runPiHeadless agent_end race-closer", () => {
     assert.equal(result.usage?.output, 4);
     assert.equal(result.transcript?.filter((msg: any) => msg.role === "assistant").length, 2);
   });
+
+  it("preserves the non-overlapping agent_end tail when repeated sparse assistant turns share the same content", async () => {
+    backendModule.__test__.setSpawn(((_cmd: string, _args: string[], _opts: any) => {
+      const proc = new EventEmitter() as any;
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      proc.kill = () => true;
+      queueMicrotask(() => {
+        const liveAssistant = {
+          role: "assistant",
+          content: [{ type: "text", text: "OK" }],
+          usage: {
+            input: 1,
+            output: 2,
+            cacheRead: 3,
+            cacheWrite: 4,
+            totalTokens: 10,
+            cost: { total: 0.123 },
+          },
+          stopReason: "stop",
+        };
+        const terminalAssistant = {
+          role: "assistant",
+          content: [{ type: "text", text: "OK" }],
+          stopReason: "stop",
+        };
+        proc.stdout.emit("data", Buffer.from(JSON.stringify({
+          type: "message_end",
+          message: liveAssistant,
+        }) + "\n"));
+        proc.stdout.emit("data", Buffer.from(JSON.stringify({
+          type: "agent_end",
+          messages: [terminalAssistant, terminalAssistant],
+          willRetry: false,
+        }) + "\n"));
+        proc.emit("exit", 0);
+        proc.emit("close", 0);
+      });
+      return proc;
+    }) as any);
+
+    const backend = backendModule.makeHeadlessBackend({
+      sessionManager: {
+        getSessionFile: () => join(root, "parent.jsonl"),
+        getSessionId: () => "parent",
+        getSessionDir: () => root,
+      } as any,
+      cwd: root,
+    });
+
+    const handle = await backend.launch({ name: "t", task: "Reply OK twice", cli: "pi" }, false);
+    const result = await backend.watch(handle);
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.error, undefined);
+    assert.equal(result.finalMessage, "OK");
+    assert.equal(result.usage?.turns, 2);
+    assert.equal(result.usage?.input, 1);
+    assert.equal(result.usage?.output, 2);
+    assert.equal(result.transcript?.filter((msg: any) => msg.role === "assistant").length, 2);
+  });
 });

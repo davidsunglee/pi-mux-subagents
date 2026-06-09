@@ -447,6 +447,7 @@ async function runPiHeadless(p: RunParams): Promise<BackendResult> {
       const anyMsg = msg as any;
       return `content:${JSON.stringify(msg.content ?? [])}:stop:${anyMsg.stopReason ?? ""}`;
     };
+    const recordedAssistantTerminalFallbackKeys: string[] = [];
     let lastAssistantTerminalFallbackKey: string | undefined;
 
     const recordPiMessage = (
@@ -454,18 +455,22 @@ async function runPiHeadless(p: RunParams): Promise<BackendResult> {
       shouldEmit: boolean,
       source: "message_end" | "tool_result_end" | "turn_end" | "agent_end",
     ): void => {
+      let assistantTerminalKey: string | undefined;
       if (msg.role === "assistant") {
         const stableKeys = assistantStableKeys(msg);
         const seenStable = stableKeys.some((key) => seenAssistantStableKeys.has(key));
-        const terminalFallbackKey = assistantTerminalFallbackKey(msg);
-        const seenTerminalCopy = (source === "turn_end" || source === "agent_end")
-          && terminalFallbackKey === lastAssistantTerminalFallbackKey;
+        assistantTerminalKey = assistantTerminalFallbackKey(msg);
+        const seenTerminalCopy = source === "turn_end"
+          && assistantTerminalKey === lastAssistantTerminalFallbackKey;
         if (seenStable || seenTerminalCopy) return;
         for (const key of stableKeys) seenAssistantStableKeys.add(key);
-        lastAssistantTerminalFallbackKey = terminalFallbackKey;
+        lastAssistantTerminalFallbackKey = assistantTerminalKey;
       }
 
       transcript.push(projectPiMessageToTranscript(msg));
+      if (msg.role === "assistant" && assistantTerminalKey) {
+        recordedAssistantTerminalFallbackKeys.push(assistantTerminalKey);
+      }
       if (msg.role === "assistant") {
         usage.turns++;
         const u: any = (msg as any).usage;
@@ -507,8 +512,26 @@ async function runPiHeadless(p: RunParams): Promise<BackendResult> {
         // backfill any assistant messages the live stream missed.
         terminalEvent = true;
         if (Array.isArray(event.messages)) {
-          for (const msg of event.messages as PiStreamMessage[]) {
-            if (msg.role === "assistant") recordPiMessage(msg, true, "agent_end");
+          const assistantMessages = (event.messages as PiStreamMessage[])
+            .filter((msg) => msg.role === "assistant");
+          const terminalKeys = assistantMessages.map(assistantTerminalFallbackKey);
+          const maxOverlap = Math.min(recordedAssistantTerminalFallbackKeys.length, terminalKeys.length);
+          let overlap = 0;
+          for (let size = maxOverlap; size > 0; size--) {
+            let matches = true;
+            for (let i = 0; i < size; i++) {
+              if (recordedAssistantTerminalFallbackKeys[recordedAssistantTerminalFallbackKeys.length - size + i] !== terminalKeys[i]) {
+                matches = false;
+                break;
+              }
+            }
+            if (matches) {
+              overlap = size;
+              break;
+            }
+          }
+          for (const msg of assistantMessages.slice(overlap)) {
+            recordPiMessage(msg, true, "agent_end");
           }
         }
       }
