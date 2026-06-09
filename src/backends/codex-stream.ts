@@ -40,13 +40,21 @@ function tomlBasicStringEscape(s: string): string {
 // trust (for example macOS `/var` resolves to `/private/var`), so canonicalize
 // the launch cwd when possible; otherwise fall back to the caller-provided path
 // for not-yet-existing test fixtures. The cwd is embedded as a TOML quoted key
-// so paths containing quotes/backslashes/control characters survive intact.
+// inside an inline `projects={...}` table so paths containing quotes,
+// backslashes, or control characters survive intact.
+//
+// Use the inline-table override rather than a dotted path such as
+// `projects."/path".trust_level="trusted"`: Codex CLI 0.138 accepts the
+// dotted token syntactically but the interactive pane trust screen does not
+// observe it, while the inline `projects={"/path"={trust_level="trusted"}}`
+// form bypasses the trust screen for the current launch.
+//
 // Returns RAW `-c key=value` tokens (no shell escaping); pane callers
 // shell-escape each token.
 export function buildCodexProjectTrustArgs(cwd: string): string[] {
   let trustPath = cwd;
   try { trustPath = realpathSync(cwd); } catch {}
-  return ["-c", `projects."${tomlBasicStringEscape(trustPath)}".trust_level="trusted"`];
+  return ["-c", `projects={"${tomlBasicStringEscape(trustPath)}"={trust_level="trusted"}}`];
 }
 
 export function codexSandboxArgs(policy: "guarded" | "unrestricted", transport: "headless" | "pane"): string[] {

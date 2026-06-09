@@ -59,11 +59,11 @@ describe("buildCodexExecArgs — headless guarded", () => {
   it("includes a per-launch project trust override for the cwd", () => {
     const args = buildCodexExecArgs(baseSpec, baseOpts);
     assert.ok(
-      args.some((a) => a === 'projects."/workspace".trust_level="trusted"'),
+      args.some((a) => a === 'projects={"/workspace"={trust_level="trusted"}}'),
       `expected a trust override for the cwd; got: ${args.join(" ")}`,
     );
     // The trust override must be a `-c` value, never written to disk.
-    const trustIdx = args.indexOf('projects."/workspace".trust_level="trusted"');
+    const trustIdx = args.indexOf('projects={"/workspace"={trust_level="trusted"}}');
     assert.equal(args[trustIdx - 1], "-c", "trust override must follow a -c token");
   });
 
@@ -77,7 +77,7 @@ describe("buildCodexExecArgs — headless guarded", () => {
       const canonical = realpathSync(link);
       const args = buildCodexExecArgs(baseSpec, { outputLastMessageFile: "/tmp/out.txt", cwd: link });
       assert.ok(
-        args.some((a) => a === `projects."${canonical}".trust_level="trusted"`),
+        args.some((a) => a === `projects={"${canonical}"={trust_level="trusted"}}`),
         `expected canonical trust override for ${canonical}; got: ${args.join(" ")}`,
       );
     } finally {
@@ -88,7 +88,7 @@ describe("buildCodexExecArgs — headless guarded", () => {
   it("escapes quotes/backslashes in the cwd path for the trust override", () => {
     const args = buildCodexExecArgs(baseSpec, { outputLastMessageFile: "/tmp/out.txt", cwd: '/we\\ird/"quoted"' });
     assert.ok(
-      args.some((a) => a === 'projects."/we\\\\ird/\\"quoted\\"".trust_level="trusted"'),
+      args.some((a) => a === 'projects={"/we\\\\ird/\\"quoted\\""={trust_level="trusted"}}'),
       `expected escaped trust override; got: ${args.join(" ")}`,
     );
   });
@@ -96,7 +96,7 @@ describe("buildCodexExecArgs — headless guarded", () => {
   it("escapes control characters in the cwd path for the trust override", () => {
     const args = buildCodexExecArgs(baseSpec, { outputLastMessageFile: "/tmp/out.txt", cwd: "/tmp/line\nbell\u0007del\u007F" });
     assert.ok(
-      args.some((a) => a === 'projects."/tmp/line\\nbell\\u0007del\\u007F".trust_level="trusted"'),
+      args.some((a) => a === 'projects={"/tmp/line\\nbell\\u0007del\\u007F"={trust_level="trusted"}}'),
       `expected escaped control characters in trust override; got: ${args.join(" ")}`,
     );
   });
@@ -249,9 +249,32 @@ describe("buildCodexPaneCmdParts", () => {
     });
     // Tokens are shell-escaped; the trust override appears in the joined command.
     assert.ok(
-      parts.join(" ").includes('projects."/workspace".trust_level="trusted"'),
+      parts.join(" ").includes('projects={"/workspace"={trust_level="trusted"}}'),
       `expected trust override in pane parts; got: ${parts.join(" ")}`,
     );
+  });
+
+  it("canonicalizes existing cwd paths for the pane trust override", () => {
+    const root = mkdtempSync(join(tmpdir(), "codex-pane-trust-realpath-"));
+    const target = join(root, "target");
+    const link = join(root, "link");
+    try {
+      mkdirSync(target);
+      symlinkSync(target, link, "dir");
+      const canonical = realpathSync(link);
+      const parts = buildCodexPaneCmdParts({
+        executionPolicy: "guarded",
+        mcpOverrideArgs: [],
+        task: "t",
+        cwd: link,
+      });
+      assert.ok(
+        parts.join(" ").includes(`projects={"${canonical}"={trust_level="trusted"}}`),
+        `expected canonical pane trust override for ${canonical}; got: ${parts.join(" ")}`,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("omits the project trust override when no cwd is provided", () => {

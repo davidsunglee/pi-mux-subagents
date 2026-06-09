@@ -444,6 +444,46 @@ function buildHerdrPaneSplitArgs(params) {
   if (params.detach) args.push("--no-focus");
   return args;
 }
+function buildHerdrSendCommandArgs(paneId, command) {
+  return [
+    ["pane", "send-text", paneId, command],
+    ["pane", "send-keys", paneId, "Enter"]
+  ];
+}
+function isHerdrPaneNotFoundError(error) {
+  const record = error;
+  return [record?.message, record?.stdout, record?.stderr].filter((value) => typeof value === "string" || Buffer.isBuffer(value)).some((value) => value.toString().includes("pane_not_found"));
+}
+function isHerdrPaneResolutionRace(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Could not resolve herdr surface to a live pane");
+}
+function isRetryableHerdrPaneActionError(error) {
+  return isHerdrPaneNotFoundError(error) || isHerdrPaneResolutionRace(error);
+}
+function sleepSync(ms) {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function runHerdrPaneActionWithRetry(params) {
+  const maxAttempts = Math.max(1, params.maxAttempts ?? 5);
+  const retryDelayMs = Math.max(0, params.retryDelayMs ?? 100);
+  let lastError;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      const paneId = params.resolvePaneId();
+      params.run(paneId);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableHerdrPaneActionError(error) || attempt === maxAttempts - 1) {
+        throw error;
+      }
+      sleepSync(retryDelayMs);
+    }
+  }
+  throw lastError;
+}
 function combineHerdrReadOutput(recentUnwrapped, visible) {
   const left = recentUnwrapped.trimEnd();
   const right = visible.trimEnd();
@@ -591,8 +631,18 @@ var herdrAdapter = {
     }
   },
   sendCommand(surface, command) {
-    const pane = resolveSurfacePane(surface);
-    execFileSync3("herdr", ["pane", "run", pane.pane_id, command], { encoding: "utf8" });
+    runHerdrPaneActionWithRetry({
+      resolvePaneId: () => resolveSurfacePane(surface).pane_id,
+      run: (paneId) => {
+        execFileSync3("herdr", buildHerdrSendCommandArgs(paneId, command)[0], { encoding: "utf8" });
+      }
+    });
+    runHerdrPaneActionWithRetry({
+      resolvePaneId: () => resolveSurfacePane(surface).pane_id,
+      run: (paneId) => {
+        execFileSync3("herdr", buildHerdrSendCommandArgs(paneId, command)[1], { encoding: "utf8" });
+      }
+    });
   },
   sendEscape(surface) {
     const pane = resolveSurfacePane(surface);
@@ -867,7 +917,7 @@ function readZellijPanes() {
       return parsed;
     } catch (error) {
       lastError = error;
-      if (attempt < 2) sleepSync(50);
+      if (attempt < 2) sleepSync2(50);
     }
   }
   throw lastError;
@@ -920,7 +970,7 @@ function envPositiveInteger(name, fallback) {
   const value = Number(process.env[name]);
   return Number.isInteger(value) && value > 0 ? value : fallback;
 }
-function sleepSync(milliseconds) {
+function sleepSync2(milliseconds) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }
 function zellijSurfaceLockPath() {
@@ -954,7 +1004,7 @@ function withZellijSurfaceLock(callback) {
           cause: error
         });
       }
-      sleepSync(50);
+      sleepSync2(50);
     }
   }
   try {

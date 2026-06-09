@@ -58,6 +58,17 @@ Requirements:
 - For Herdr-specific validation, `HERDR_ENV=1` and `HERDR_PANE_ID` should be set. If they are absent, warn that Herdr pane tests will skip or fail instead of exercising the Herdr adapter.
 - If no mux backend environment is present, the default integration suite can still run headless tests, but pane/mux tests will skip. Ask before proceeding if the user specifically requested pane/mux coverage.
 
+### Herdr cleanup before full or release-candidate runs
+
+Herdr public pane/tab ids compact when sibling panes close. A failed or killed integration run can leave stale `pi-integ-*` tabs that later compact ids and make failures harder to diagnose. Before a full Herdr run, check for stale processes and panes:
+
+```bash
+pgrep -af "test/integration|pnpm run test:integration|codex .*pi-integ|claude .*pi-integ|subagent-scripts/.+pi-integ" || true
+herdr pane list
+```
+
+If stale Herdr panes are clearly from prior integration temp dirs (`cwd` or `foreground_cwd` contains `pi-integ-*` or `pi-coord-tools-*`) and there is no matching live process, close those stale tabs before starting the next full run. Do **not** close arbitrary user panes. Because Herdr ids compact after each close, re-run `herdr pane list` between close batches instead of assuming old tab ids remain valid.
+
 ## Step 2: Choose the command
 
 Build one command string and pass it verbatim to test-runner.
@@ -161,6 +172,20 @@ Read the parsed artifact JSON:
 - Non-empty `non_reconcilable_failures`: report the evidence blocks verbatim; these are crashes/build/collection errors or failures without stable test names.
 
 Do not rely on hardcoded expected test counts. Use the Node test summary in the artifact (`tests`, `pass`, `fail`, `skipped`) and the parsed failure buckets.
+
+### Failure triage rules
+
+- A failed, killed, timed-out, or manually-unblocked run is diagnostic only. Do **not** cite it as release/pass evidence.
+- If supervising a long run directly with the `process` tool and a watch pattern fires (`✖`, `fail`, `Error: Timeout`, `Do you trust`, `pane_not_found`), immediately read `process output`/`process logs` and identify the exact failing suite/test before changing code. Repeated watch messages from an already-failed process are stale noise; clear finished process records once captured.
+- After a full run fails, reproduce the smallest failing target before rerunning the full suite, for example:
+
+  ```bash
+  PI_SUBAGENT_MUX=herdr PI_RUN_SLOW=1 node --import ./test/integration/clear-subagent-env.ts --test test/integration/<failing-file>.test.ts
+  PI_SUBAGENT_MUX=herdr PI_RUN_SLOW=1 node --import ./test/integration/clear-subagent-env.ts --test --test-name-pattern '<failing test name>' test/integration/<failing-file>.test.ts
+  ```
+
+- For Herdr `pane_not_found` failures, assume public `pane_id` compaction until disproven. Search the parent session JSONL for the marker/test id and inspect tool results; compare the failed `pane_id` with current `herdr pane list` using durable `terminal_id`/surface data. This distinguishes command-submission races from child-agent failures.
+- After any code change from triage, run targeted tests first, then `pnpm run check`, then a clean full integration run with stale panes/processes removed.
 
 ## Step 5: Optional session validation
 

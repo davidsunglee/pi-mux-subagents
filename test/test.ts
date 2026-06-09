@@ -36,6 +36,9 @@ import {
   decodeHerdrSurface,
   buildHerdrTabCreateArgs,
   buildHerdrPaneSplitArgs,
+  buildHerdrSendCommandArgs,
+  isHerdrPaneNotFoundError,
+  runHerdrPaneActionWithRetry,
   combineHerdrReadOutput,
   herdrAdapter,
 } from "../src/mux/adapters/herdr.ts";
@@ -118,6 +121,14 @@ function writeAgentFile(
   mkdirSync(agentsDir, { recursive: true });
   writeFileSync(join(agentsDir, `${name}.md`), `---\n${frontmatter}\n---\n\n${body}\n`);
 }
+
+describe("package integration scripts", () => {
+  it("runs integration test files serially to avoid shared mux and LLM contention", () => {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    assert.match(pkg.scripts["test:integration"], /--test-concurrency=1/);
+    assert.match(pkg.scripts["test:integration:slow"], /--test-concurrency=1/);
+  });
+});
 
 async function withIsolatedAgentEnv(
   fn: (paths: {
@@ -1714,6 +1725,84 @@ describe("mux", () => {
     it("buildHerdrPaneSplitArgs appends --no-focus on detach", () => {
       const args = buildHerdrPaneSplitArgs({ paneId: "p_1", direction: "right", detach: true });
       assert.ok(args.includes("--no-focus"));
+    });
+
+    it("buildHerdrSendCommandArgs sends text and Enter instead of pane run", () => {
+      assert.deepEqual(buildHerdrSendCommandArgs("p_1", "yes please proceed"), [
+        ["pane", "send-text", "p_1", "yes please proceed"],
+        ["pane", "send-keys", "p_1", "Enter"],
+      ]);
+    });
+
+    it("isHerdrPaneNotFoundError recognizes Herdr compacted-id failures", () => {
+      const error = new Error(
+        'Command failed: herdr pane send-text old "cmd"\n{"error":{"code":"pane_not_found"}}',
+      );
+      assert.equal(isHerdrPaneNotFoundError(error), true);
+      assert.equal(isHerdrPaneNotFoundError(new Error("permission denied")), false);
+    });
+
+    it("runHerdrPaneActionWithRetry re-resolves after pane_not_found", () => {
+      const resolved: string[] = [];
+      const attempted: string[] = [];
+      const ids = ["old-pane", "new-pane"];
+
+      runHerdrPaneActionWithRetry({
+        retryDelayMs: 0,
+        resolvePaneId: () => {
+          const id = ids.shift() ?? "new-pane";
+          resolved.push(id);
+          return id;
+        },
+        run: (paneId) => {
+          attempted.push(paneId);
+          if (paneId === "old-pane") {
+            throw new Error('{"error":{"code":"pane_not_found"}}');
+          }
+        },
+      });
+
+      assert.deepEqual(resolved, ["old-pane", "new-pane"]);
+      assert.deepEqual(attempted, ["old-pane", "new-pane"]);
+    });
+
+    it("runHerdrPaneActionWithRetry retries transient terminal_id resolution races", () => {
+      let resolves = 0;
+      const attempted: string[] = [];
+
+      runHerdrPaneActionWithRetry({
+        retryDelayMs: 0,
+        resolvePaneId: () => {
+          resolves += 1;
+          if (resolves === 1) {
+            throw new Error(
+              "Could not resolve herdr surface to a live pane (terminal_id=term-new; kind=tab; workspace_id=w_1). The pane may have been closed externally.",
+            );
+          }
+          return "new-pane";
+        },
+        run: (paneId) => {
+          attempted.push(paneId);
+        },
+      });
+
+      assert.equal(resolves, 2);
+      assert.deepEqual(attempted, ["new-pane"]);
+    });
+
+    it("runHerdrPaneActionWithRetry does not retry non-compaction failures", () => {
+      let attempts = 0;
+      assert.throws(
+        () => runHerdrPaneActionWithRetry({
+          resolvePaneId: () => "pane-1",
+          run: () => {
+            attempts += 1;
+            throw new Error("permission denied");
+          },
+        }),
+        /permission denied/,
+      );
+      assert.equal(attempts, 1);
     });
 
     it("combineHerdrReadOutput uses visible when recent-unwrapped is empty", () => {

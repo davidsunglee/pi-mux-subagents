@@ -1,0 +1,16 @@
+PHASE: gitleaks-detect
+COMMAND: gitleaks detect --source . --redact --verbose
+WORKING_DIRECTORY: /Users/david/Code/pi-mux-subagents
+HEAD: 99ce262678af009c86b346d0b6a4fe0b1dc4844a
+TIMESTAMP: 2026-06-09T22:48:57Z
+--- RAW RUN OUTPUT BELOW ---
+
+    ○
+    │╲
+    │ ○
+    ○ ░
+    ░    gitleaks
+
+[90m6:48PM[0m [32mINF[0m [1m55 commits scanned.[0m
+[90m6:48PM[0m [32mINF[0m [1mscanned ~1918924 bytes (1.92 MB) in 205ms[0m
+[90m6:48PM[0m [32mINF[0m [1mno leaks found[0m

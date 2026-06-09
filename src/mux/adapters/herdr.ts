@@ -227,6 +227,59 @@ export function buildHerdrPaneSplitArgs(params: {
   return args;
 }
 
+export function buildHerdrSendCommandArgs(paneId: string, command: string): string[][] {
+  return [
+    ["pane", "send-text", paneId, command],
+    ["pane", "send-keys", paneId, "Enter"],
+  ];
+}
+
+export function isHerdrPaneNotFoundError(error: unknown): boolean {
+  const record = error as { message?: unknown; stdout?: unknown; stderr?: unknown };
+  return [record?.message, record?.stdout, record?.stderr]
+    .filter((value): value is string | Buffer => typeof value === "string" || Buffer.isBuffer(value))
+    .some((value) => value.toString().includes("pane_not_found"));
+}
+
+function isHerdrPaneResolutionRace(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Could not resolve herdr surface to a live pane");
+}
+
+function isRetryableHerdrPaneActionError(error: unknown): boolean {
+  return isHerdrPaneNotFoundError(error) || isHerdrPaneResolutionRace(error);
+}
+
+function sleepSync(ms: number): void {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+export function runHerdrPaneActionWithRetry(params: {
+  resolvePaneId: () => string;
+  run: (paneId: string) => void;
+  maxAttempts?: number;
+  retryDelayMs?: number;
+}): void {
+  const maxAttempts = Math.max(1, params.maxAttempts ?? 5);
+  const retryDelayMs = Math.max(0, params.retryDelayMs ?? 100);
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      const paneId = params.resolvePaneId();
+      params.run(paneId);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableHerdrPaneActionError(error) || attempt === maxAttempts - 1) {
+        throw error;
+      }
+      sleepSync(retryDelayMs);
+    }
+  }
+  throw lastError;
+}
+
 export function combineHerdrReadOutput(
   recentUnwrapped: string,
   visible: string,
@@ -408,8 +461,25 @@ export const herdrAdapter: MuxAdapter = {
   },
 
   sendCommand(surface: string, command: string): void {
-    const pane = resolveSurfacePane(surface);
-    execFileSync("herdr", ["pane", "run", pane.pane_id, command], { encoding: "utf8" });
+    // `sendCommand` is the mux abstraction for "type this and press Enter".
+    // Herdr's `pane run` is also documented as a combined text+Enter operation,
+    // but the explicit text/key primitives keep this path tied to interactive
+    // input semantics across Herdr versions.
+    // Re-resolve between the text and Enter calls: Herdr compacts public pane
+    // ids when sibling panes close, so a pane_id can become stale between two
+    // CLI invocations even though the stored terminal_id surface is still live.
+    runHerdrPaneActionWithRetry({
+      resolvePaneId: () => resolveSurfacePane(surface).pane_id,
+      run: (paneId) => {
+        execFileSync("herdr", buildHerdrSendCommandArgs(paneId, command)[0], { encoding: "utf8" });
+      },
+    });
+    runHerdrPaneActionWithRetry({
+      resolvePaneId: () => resolveSurfacePane(surface).pane_id,
+      run: (paneId) => {
+        execFileSync("herdr", buildHerdrSendCommandArgs(paneId, command)[1], { encoding: "utf8" });
+      },
+    });
   },
 
   sendEscape(surface: string): void {
