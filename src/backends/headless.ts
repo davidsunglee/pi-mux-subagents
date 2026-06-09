@@ -435,17 +435,22 @@ async function runPiHeadless(p: RunParams): Promise<BackendResult> {
     };
 
     const seenAssistantKeys = new Set<string>();
-    const assistantKey = (msg: PiStreamMessage): string => {
+    const assistantKeys = (msg: PiStreamMessage): string[] => {
       const anyMsg = msg as any;
-      return anyMsg.responseId
-        ?? `${anyMsg.timestamp ?? ""}:${JSON.stringify(msg.content ?? [])}`;
+      const contentKey = JSON.stringify(msg.content ?? []);
+      const keys = [
+        `content:${contentKey}:usage:${JSON.stringify(anyMsg.usage ?? null)}:stop:${anyMsg.stopReason ?? ""}`,
+      ];
+      if (anyMsg.responseId) keys.push(`response:${anyMsg.responseId}`);
+      if (anyMsg.timestamp) keys.push(`timestamp:${anyMsg.timestamp}:content:${contentKey}`);
+      return keys;
     };
 
     const recordPiMessage = (msg: PiStreamMessage, shouldEmit: boolean): void => {
       if (msg.role === "assistant") {
-        const key = assistantKey(msg);
-        if (seenAssistantKeys.has(key)) return;
-        seenAssistantKeys.add(key);
+        const keys = assistantKeys(msg);
+        if (keys.some((key) => seenAssistantKeys.has(key))) return;
+        for (const key of keys) seenAssistantKeys.add(key);
       }
 
       transcript.push(projectPiMessageToTranscript(msg));

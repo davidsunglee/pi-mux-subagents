@@ -196,14 +196,14 @@ Sample output:
 {
   "backend": "pane",
   "mux": "herdr",
-  "modeForced": false,
+  "modeForced": null,
   "muxPreference": null,
-  "muxPreferenceInvalid": false,
-  "reason": "herdr detected via HERDR_ENV"
+  "muxPreferenceInvalid": null,
+  "reason": "auto-selected pane backend; mux=herdr from detection order [herdr,cmux,tmux,zellij,wezterm]"
 }
 ```
 
-Fields: `backend` (`"pane"` or `"headless"`), `mux` (detected adapter name or `null`), `modeForced` (whether `PI_SUBAGENT_MODE` forced the backend), `muxPreference` (value of `PI_SUBAGENT_MUX` when set and valid), `muxPreferenceInvalid` (true when `PI_SUBAGENT_MUX` is set to an unrecognised value), `reason` (human-readable explanation of the detection outcome).
+Fields: `backend` (`"pane"` or `"headless"`), `mux` (detected adapter name or `null`), `modeForced` (`"pane"`, `"headless"`, or `null` depending on `PI_SUBAGENT_MODE`), `muxPreference` (value of `PI_SUBAGENT_MUX` when set and valid), `muxPreferenceInvalid` (the invalid raw `PI_SUBAGENT_MUX` value, or `null`), `reason` (human-readable explanation of the detection outcome).
 
 Downstream packages should call `pi-mux-detect` rather than duplicating mux env-var checks.
 
