@@ -23,6 +23,27 @@ function makeDeps(): LauncherDeps {
   };
 }
 
+function makeBlockingDeps(): LauncherDeps {
+  return {
+    async launch(task, _focus, _signal, diagnostics) {
+      // Emit a launch warning, then the task blocks on a ping.
+      warnCodexUnsupportedFeatures(task.name!, "research", "read,bash", undefined, diagnostics);
+      return { id: "h-" + task.name, name: task.name!, startTime: Date.now(), sessionKey: "sk-" + task.name };
+    },
+    async waitForCompletion(handle) {
+      return {
+        name: handle.name,
+        finalMessage: "",
+        transcriptPath: null,
+        exitCode: 0,
+        elapsedMs: 1,
+        sessionKey: "sk-" + handle.name,
+        ping: { name: handle.name, message: "needs input" },
+      };
+    },
+  };
+}
+
 function withStderr(fn: () => Promise<void>): Promise<void> {
   const orig = process.stderr.write.bind(process.stderr);
   (process.stderr as any).write = () => true;
@@ -53,6 +74,48 @@ describe("structured warnings surface per task and exclude human-only", () => {
         assert.ok(r.warnings?.some((w) => w.includes("ignoring skills=research")));
         assert.ok(!r.warnings?.some((w) => w.includes("human-only line")));
       }
+    });
+  });
+
+  it("serial: blocked task's onBlocked partial preserves collected warnings", async () => {
+    await withStderr(async () => {
+      let blocked: { partial: { warnings?: string[] } } | undefined;
+      const out = await runSerial(
+        [{ agent: "x", task: "t", name: "worker" }],
+        {
+          onBlocked: (_i, payload) => {
+            blocked = payload;
+          },
+        },
+        makeBlockingDeps(),
+      );
+      assert.equal(out.blocked, true);
+      assert.ok(blocked, "onBlocked should have fired");
+      assert.ok(
+        blocked!.partial.warnings?.some((w) => w.includes("ignoring skills=research")),
+        "blocked partial must carry the launch warning so it survives resume",
+      );
+    });
+  });
+
+  it("parallel: blocked task's onBlocked partial preserves collected warnings", async () => {
+    await withStderr(async () => {
+      let blocked: { partial: { warnings?: string[] } } | undefined;
+      await runParallel(
+        [{ agent: "x", task: "t", name: "a" }],
+        {
+          maxConcurrency: 1,
+          onBlocked: (_i, payload) => {
+            blocked = payload;
+          },
+        },
+        makeBlockingDeps(),
+      );
+      assert.ok(blocked, "onBlocked should have fired");
+      assert.ok(
+        blocked!.partial.warnings?.some((w) => w.includes("ignoring skills=research")),
+        "blocked partial must carry the launch warning so it survives resume",
+      );
     });
   });
 });

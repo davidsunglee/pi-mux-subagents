@@ -156,6 +156,7 @@ export async function runParallel(
               sessionKey: result.sessionKey,
               usage: result.usage,
               transcript: result.transcript,
+              warnings: result.warnings,
             },
           });
           // results[i] stays "running" because the registry owns this slot.

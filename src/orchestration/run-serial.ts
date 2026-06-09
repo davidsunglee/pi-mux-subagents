@@ -156,6 +156,7 @@ export async function runSerial(
             sessionKey: result.sessionKey,
             usage: result.usage,
             transcript: result.transcript,
+            warnings: result.warnings,
           },
         });
         return { results, isError: false, blocked: true };
