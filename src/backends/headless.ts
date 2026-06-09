@@ -434,14 +434,11 @@ async function runPiHeadless(p: RunParams): Promise<BackendResult> {
       });
     };
 
-    const seenAssistantKeys = new Set<string>();
-    const seenAssistantTerminalFallbackKeys = new Set<string>();
-    const assistantStrongKeys = (msg: PiStreamMessage): string[] => {
+    const seenAssistantStableKeys = new Set<string>();
+    const assistantStableKeys = (msg: PiStreamMessage): string[] => {
       const anyMsg = msg as any;
       const contentKey = JSON.stringify(msg.content ?? []);
-      const keys = [
-        `content:${contentKey}:usage:${JSON.stringify(anyMsg.usage ?? null)}:stop:${anyMsg.stopReason ?? ""}`,
-      ];
+      const keys: string[] = [];
       if (anyMsg.responseId) keys.push(`response:${anyMsg.responseId}`);
       if (anyMsg.timestamp) keys.push(`timestamp:${anyMsg.timestamp}:content:${contentKey}`);
       return keys;
@@ -450,6 +447,7 @@ async function runPiHeadless(p: RunParams): Promise<BackendResult> {
       const anyMsg = msg as any;
       return `content:${JSON.stringify(msg.content ?? [])}:stop:${anyMsg.stopReason ?? ""}`;
     };
+    let lastAssistantTerminalFallbackKey: string | undefined;
 
     const recordPiMessage = (
       msg: PiStreamMessage,
@@ -457,14 +455,14 @@ async function runPiHeadless(p: RunParams): Promise<BackendResult> {
       source: "message_end" | "tool_result_end" | "turn_end" | "agent_end",
     ): void => {
       if (msg.role === "assistant") {
-        const strongKeys = assistantStrongKeys(msg);
+        const stableKeys = assistantStableKeys(msg);
+        const seenStable = stableKeys.some((key) => seenAssistantStableKeys.has(key));
         const terminalFallbackKey = assistantTerminalFallbackKey(msg);
-        const seen = strongKeys.some((key) => seenAssistantKeys.has(key))
-          || ((source === "turn_end" || source === "agent_end")
-            && seenAssistantTerminalFallbackKeys.has(terminalFallbackKey));
-        if (seen) return;
-        for (const key of strongKeys) seenAssistantKeys.add(key);
-        seenAssistantTerminalFallbackKeys.add(terminalFallbackKey);
+        const seenTerminalCopy = (source === "turn_end" || source === "agent_end")
+          && terminalFallbackKey === lastAssistantTerminalFallbackKey;
+        if (seenStable || seenTerminalCopy) return;
+        for (const key of stableKeys) seenAssistantStableKeys.add(key);
+        lastAssistantTerminalFallbackKey = terminalFallbackKey;
       }
 
       transcript.push(projectPiMessageToTranscript(msg));
