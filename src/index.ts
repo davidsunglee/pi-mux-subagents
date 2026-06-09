@@ -76,7 +76,7 @@ import {
   buildPiPromptArgs,
 } from "./launch/launch-spec.ts";
 import { composePanePrompt, resolvePaneCompletionProtocol, assertNever } from "./launch/pane-completion-protocol.ts";
-import { emitDiagnostic, registerAmbientUi, type DiagnosticContext } from "./diagnostics/diagnostics.ts";
+import { emitDiagnostic, registerAmbientUi, createDiagnosticCollector, type DiagnosticContext } from "./diagnostics/diagnostics.ts";
 import {
   createStatusState,
   type SubagentStatusState,
@@ -2033,8 +2033,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         if (preflight) return preflight;
 
         if (selectBackend() === "headless") {
+          const collector = createDiagnosticCollector();
           const backend = makeHeadlessBackend(ctx);
-          const handle = await backend.launch(params, params.focus ?? true);
+          const handle = await backend.launch(params, params.focus ?? true, undefined, { collector });
+          const warnings = collector.drain();
 
           const id = randomUUID();
           const watcherAbort = new AbortController();
@@ -2147,12 +2149,15 @@ export default function subagentsExtension(pi: ExtensionAPI) {
               agent: params.agent,
               backend: "headless",
               status: "started",
+              ...(warnings.length ? { warnings } : {}),
             },
           };
         }
 
         // Launch the subagent (creates pane, sends command)
-        const running = await launchSubagent(params, ctx);
+        const collector = createDiagnosticCollector();
+        const running = await launchSubagent(params, ctx, { diagnostics: { collector } });
+        const warnings = collector.drain();
 
         // Create a separate AbortController for the watcher
         // (the tool's signal completes when we return)
@@ -2251,6 +2256,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
             sessionFile: running.sessionFile,
             launchScriptFile: running.launchScriptFile,
             status: "started",
+            ...(warnings.length ? { warnings } : {}),
           },
         };
       },

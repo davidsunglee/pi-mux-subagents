@@ -1,3 +1,4 @@
+import { createDiagnosticCollector } from "../diagnostics/diagnostics.ts";
 import type {
   LauncherDeps,
   OrchestratedTaskResult,
@@ -118,8 +119,9 @@ export async function runSerial(
           });
         }
       : undefined;
+    const collector = createDiagnosticCollector();
     try {
-      const handle = await deps.launch(task, true /* defaultFocus */, opts.signal);
+      const handle = await deps.launch(task, true /* defaultFocus */, opts.signal, { collector });
       opts.onLaunched?.(i, { sessionKey: handle.sessionKey });
       result = await deps.waitForCompletion(handle, opts.signal, stepOnUpdate, {
         onSessionKey: (sessionKey) => opts.onSessionKey?.(i, sessionKey),
@@ -134,6 +136,8 @@ export async function runSerial(
         error: err?.message ?? String(err),
       };
     }
+    const warnings = collector.drain();
+    if (warnings.length) result.warnings = warnings;
     if (result.ping) {
       if (opts.onBlocked && result.sessionKey) {
         // Async path: transition to blocked and stop. Downstream steps stay
@@ -182,6 +186,7 @@ export async function runSerial(
       error: result.error,
       usage: result.usage,
       transcript: result.transcript,
+      warnings: result.warnings,
     });
 
     if (result.exitCode !== 0 || result.error) {

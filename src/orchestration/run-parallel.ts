@@ -1,3 +1,4 @@
+import { createDiagnosticCollector } from "../diagnostics/diagnostics.ts";
 import {
   DEFAULT_PARALLEL_CONCURRENCY,
   MAX_PARALLEL_HARD_CAP,
@@ -118,8 +119,9 @@ export async function runParallel(
             emitInflight();
           }
         : undefined;
+      const collector = createDiagnosticCollector();
       try {
-        const handle = await deps.launch(task, false /* defaultFocus */, opts.signal);
+        const handle = await deps.launch(task, false /* defaultFocus */, opts.signal, { collector });
         opts.onLaunched?.(i, { sessionKey: handle.sessionKey });
         results[i] = { ...results[i], state: "running", ...(handle.sessionKey ? { sessionKey: handle.sessionKey } : {}) };
         emitInflight();
@@ -136,6 +138,8 @@ export async function runParallel(
           error: err?.message ?? String(err),
         };
       }
+      const warnings = collector.drain();
+      if (warnings.length) result.warnings = warnings;
       if (result.ping) {
         if (opts.onBlocked && result.sessionKey) {
           opts.onBlocked(i, {
@@ -191,6 +195,7 @@ export async function runParallel(
         error: result.error,
         usage: result.usage,
         transcript: result.transcript,
+        warnings: result.warnings,
       });
       if (result.exitCode !== 0 || result.error) {
         isError = true;
