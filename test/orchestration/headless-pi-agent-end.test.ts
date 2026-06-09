@@ -71,7 +71,7 @@ describe("runPiHeadless agent_end race-closer", () => {
     assert.equal(result.transcript?.at(-1)?.role, "assistant");
   });
 
-  it("deduplicates the final assistant message when message_end and agent_end disagree on metadata", async () => {
+  it("deduplicates the final assistant message when agent_end loses usage metadata", async () => {
     backendModule.__test__.setSpawn(((_cmd: string, _args: string[], _opts: any) => {
       const proc = new EventEmitter() as any;
       proc.stdout = new EventEmitter();
@@ -95,14 +95,6 @@ describe("runPiHeadless agent_end race-closer", () => {
         const assistantFromAgentEnd = {
           role: "assistant",
           content: [{ type: "text", text: "OK" }],
-          usage: {
-            input: 1,
-            output: 2,
-            cacheRead: 3,
-            cacheWrite: 4,
-            totalTokens: 10,
-            cost: { total: 0.123 },
-          },
           stopReason: "stop",
         };
         proc.stdout.emit("data", Buffer.from(JSON.stringify({
@@ -136,6 +128,8 @@ describe("runPiHeadless agent_end race-closer", () => {
     assert.equal(result.error, undefined);
     assert.equal(result.finalMessage, "OK");
     assert.equal(result.usage?.turns, 1);
+    assert.equal(result.usage?.input, 1);
+    assert.equal(result.usage?.output, 2);
     assert.equal(result.transcript?.filter((msg: any) => msg.role === "assistant").length, 1);
   });
 });

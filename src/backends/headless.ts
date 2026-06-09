@@ -439,6 +439,7 @@ async function runPiHeadless(p: RunParams): Promise<BackendResult> {
       const anyMsg = msg as any;
       const contentKey = JSON.stringify(msg.content ?? []);
       const keys = [
+        `content:${contentKey}:stop:${anyMsg.stopReason ?? ""}`,
         `content:${contentKey}:usage:${JSON.stringify(anyMsg.usage ?? null)}:stop:${anyMsg.stopReason ?? ""}`,
       ];
       if (anyMsg.responseId) keys.push(`response:${anyMsg.responseId}`);
