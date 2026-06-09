@@ -1,6 +1,6 @@
 {
   "name": "@aphotic/pi-mux-subagents",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Interactive + headless subagent framework for pi and Claude Code, with mux-pane support, sync/async orchestration, and a multi-CLI design.",
   "files": [
     "src",

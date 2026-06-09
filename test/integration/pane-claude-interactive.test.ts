@@ -20,6 +20,9 @@ const PLUGIN_DIR = join(
 );
 const PLUGIN_BUILT = existsSync(join(PLUGIN_DIR, "mcp", "server.js"));
 const backends = getAvailableBackends();
+const CLAUDE_FIRST_TURN_TIMEOUT = Number(
+  process.env.PI_CLAUDE_FIRST_TURN_TIMEOUT ?? String(PI_TIMEOUT),
+);
 const SHOULD_SKIP = !CLAUDE_AVAILABLE || !PLUGIN_BUILT || backends.length === 0 || !SLOW_LANE_OPT_IN;
 if (SHOULD_SKIP) {
   console.log(`⚠️  pane-claude-interactive skipped: CLAUDE=${CLAUDE_AVAILABLE} PLUGIN_BUILT=${PLUGIN_BUILT} BACKENDS=${backends.length} SLOW=${SLOW_LANE_OPT_IN}`);
@@ -60,7 +63,7 @@ for (const backend of backends) {
       // Wait for the first assistant turn to be observable in the pane (the
       // model must have asked its clarifying question). Anchored to the
       // explicit CLARIFY? marker so we don't depend on timing.
-      await waitForScreen(running.surface, /CLARIFY\?/, 30_000);
+      await waitForScreen(running.surface, /CLARIFY\?/, CLAUDE_FIRST_TURN_TIMEOUT);
 
       // Now — having seen a real first assistant turn — assert the sentinel
       // file is still absent. This pins the regression: the deleted
@@ -189,7 +192,7 @@ for (const backend of backends) {
       // Drive abort off an observable assistant-turn marker — not a fixed
       // timer — so the test actually covers the "mid-question" state. With a
       // bare timer the abort can fire before Claude has produced any turn.
-      const driver = waitForScreen(running.surface, /CLARIFY_MID\?/, 30_000)
+      const driver = waitForScreen(running.surface, /CLARIFY_MID\?/, CLAUDE_FIRST_TURN_TIMEOUT)
         .then(() => ctrl.abort());
       const result = await watchSubagent(running, ctrl.signal);
       await driver; // surface marker/send failures as test failures
@@ -213,7 +216,7 @@ for (const backend of backends) {
       // — without it, /exit could land before Claude even started. Capture
       // the driver promise so a missed marker or send-failure surfaces as a
       // test failure, not a timeout / unhandled background rejection.
-      const driver = waitForScreen(running.surface, /READY/, 30_000)
+      const driver = waitForScreen(running.surface, /READY/, CLAUDE_FIRST_TURN_TIMEOUT)
         .then(() => sendCommand(running.surface, "/exit"));
       const result = await watchSubagent(running, new AbortController().signal);
       await driver;

@@ -1616,10 +1616,11 @@ export async function watchSubagent(
       // Bounded wait for the .transcript pointer so one-turn autonomous
       // sessions don't lose transcript/session metadata. The MCP sentinel
       // (written by subagent_done) and the .transcript pointer (written by
-      // the Stop hook) are independent events; in autonomous one-turn
-      // completions the MCP write can finish before the Stop hook fires.
-      // Without this wait, copyClaudeSession would observe a missing pointer
-      // and return null, dropping transcriptPath / sessionId on the floor.
+      // the Stop hook) are independent events; Claude may spend several
+      // seconds after the tool call recording the tool result, emitting a final
+      // assistant turn, and running hooks. Without this wait,
+      // copyClaudeSession would observe a missing pointer and return null,
+      // dropping transcriptPath / sessionId on the floor.
       //
       // Gate the wait narrowly: only when the sentinel file actually exists
       // AND its .transcript pointer is missing. Manual-exit and abort paths
@@ -1628,7 +1629,7 @@ export async function watchSubagent(
       if (running.sentinelFile && existsSync(running.sentinelFile)) {
         const pointer = running.sentinelFile + ".transcript";
         if (!existsSync(pointer)) {
-          const deadline = Date.now() + 2000;
+          const deadline = Date.now() + 10_000;
           while (!existsSync(pointer) && Date.now() < deadline) {
             await new Promise((res) => setTimeout(res, 50));
           }
@@ -1744,7 +1745,7 @@ export async function watchSubagent(
         try { unlinkSync(running.sentinelFile + ".transcript"); } catch {}
       }
 
-      closeSurface(surface);
+      try { closeSurface(surface); } catch {}
       runningSubagents.delete(running.id);
 
       // Claude CLI children cannot call pi's `caller_ping` tool on the initial
@@ -2537,10 +2538,21 @@ export default function subagentsExtension(pi: ExtensionAPI) {
           if (resumeAutoExit) {
             resumeEnvParts.push(`PI_SUBAGENT_AUTO_EXIT=1`);
           }
+          resumeEnvParts.push(`PI_SUBAGENT_NAME=${shellEscape(name)}`);
+          resumeEnvParts.push(`PI_SUBAGENT_SESSION=${shellEscape(params.sessionPath!)}`);
           resumeEnvParts.push(`PI_SUBAGENT_ID=${shellEscape(id)}`);
           resumeEnvParts.push(`PI_SUBAGENT_ACTIVITY_FILE=${shellEscape(resumeActivityFile)}`);
           const resumeEnvPrefix = resumeEnvParts.length > 0 ? resumeEnvParts.join(" ") + " " : "";
-          command = `${resumeEnvPrefix}${parts.join(" ")}; echo '__SUBAGENT_DONE_'$?'__'`;
+          let resumeCwd: string | null = null;
+          try {
+            const firstLine = readFileSync(params.sessionPath!, "utf8").split("\n", 1)[0];
+            const header = firstLine ? JSON.parse(firstLine) : null;
+            if (typeof header?.cwd === "string" && header.cwd.length > 0 && existsSync(header.cwd)) {
+              resumeCwd = header.cwd;
+            }
+          } catch {}
+          const cdPrefix = buildPaneCdPrefix(resumeCwd, ctx.cwd);
+          command = `${cdPrefix}${resumeEnvPrefix}${parts.join(" ")}; echo '__SUBAGENT_DONE_'$?'__'`;
           launchScriptFile = join(
             artifactDir, "subagent-scripts",
             `${name.toLowerCase().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "resume"}-resume-${Date.now()}.sh`,

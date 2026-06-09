@@ -30,6 +30,49 @@ function resultEvent(): string {
 }
 
 describe("watchSubagent pane Claude post-mortem catch-up", () => {
+  it("waits for a delayed Stop-hook transcript pointer after the MCP sentinel", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pane-claude-delayed-pointer-"));
+    try {
+      const jsonl = join(dir, "delayed-pointer-id.jsonl");
+      const sentinel = join(dir, "sentinel");
+      const pointer = sentinel + ".transcript";
+
+      // The MCP tool writes the sentinel before Claude has finished its final
+      // turn and run the Stop hook. In real runs this gap can exceed two
+      // seconds; the watcher must not close the pane before the Stop hook has
+      // surfaced the transcript path.
+      writeFileSync(sentinel, "");
+
+      const writeTimer = setTimeout(() => {
+        try {
+          writeFileSync(jsonl, assistantEvent("late-stop-hook-transcript") + resultEvent());
+          writeFileSync(pointer, jsonl);
+        } catch {}
+      }, 2500);
+
+      const running: RunningSubagent = {
+        id: "claude-delayed-pointer",
+        name: "ClaudeDelayedPointer",
+        task: "test",
+        backend: "pane",
+        surface: "fake-surface",
+        sessionFile: join(dir, "ignored.jsonl"),
+        sentinelFile: sentinel,
+        cli: "claude",
+        startTime: Date.now(),
+      };
+
+      const result = await watchSubagent(running, new AbortController().signal);
+      clearTimeout(writeTimer);
+
+      assert.ok(result.transcriptPath, "transcriptPath should survive a delayed Stop-hook pointer");
+      assert.equal(result.summary, "late-stop-hook-transcript");
+      assert.ok(result.transcript && result.transcript.length === 1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("re-parses the archived jsonl when the live tail saw nothing", async () => {
     const dir = mkdtempSync(join(tmpdir(), "pane-claude-postmortem-"));
     try {

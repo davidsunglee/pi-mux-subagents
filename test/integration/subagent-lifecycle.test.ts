@@ -19,6 +19,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   getAvailableBackends,
   setBackend,
@@ -35,6 +36,7 @@ import {
   PI_TIMEOUT,
   type TestEnv,
 } from "./harness.ts";
+import { launchSubagent, watchSubagent } from "../../src/index.ts";
 
 const backends = getAvailableBackends();
 
@@ -264,20 +266,29 @@ for (const backend of backends) {
       const id = uniqueId();
       const markerFile = `/tmp/pi-integ-sysprompt-${id}.txt`;
       trackTempFile(env, markerFile);
+      const promptMarker = `CUSTOM_PROMPT_ACTIVE_${id}`;
 
-      const surface = createTrackedSurface(env, `sysprompt-${id}`);
-      await sleep(1000);
+      const running = await launchSubagent(
+        {
+          name: `SysP-${id}`,
+          agent: "test-echo-system-prompt",
+          systemPrompt: `Include ${promptMarker} in your final response after completing the task.`,
+          task: `Run this bash command immediately: echo 'SYSPROMPT_${id}' > '${markerFile}'`,
+        },
+        {
+          sessionManager: {
+            getSessionFile: () => join(env.dir, "parent.jsonl"),
+            getSessionId: () => "subagent-lifecycle",
+            getSessionDir: () => env.dir,
+          },
+          cwd: env.dir,
+        },
+      );
+      env.surfaces.push(running.surface!);
 
-      const task = [
-        `Call the subagent tool with these parameters:`,
-        `  name: "SysP-${id}"`,
-        `  agent: "test-echo"`,
-        `  systemPrompt: "Always start your response with CUSTOM_PROMPT_ACTIVE."`,
-        `  task: "Write 'SYSPROMPT_${id}' to ${markerFile} using bash: echo 'SYSPROMPT_${id}' > '${markerFile}'"`,
-        `After the subagent completes, say SYSPROMPT_TEST_DONE.`,
-      ].join("\n");
-
-      startPi(surface, env.dir, task);
+      const result = await watchSubagent(running, new AbortController().signal);
+      assert.equal(result.exitCode, 0, `subagent should exit cleanly: ${result.summary}`);
+      assert.match(result.summary, new RegExp(promptMarker), "systemPrompt marker should reach the child response");
 
       const content = await waitForFile(markerFile, PI_TIMEOUT, /SYSPROMPT/);
       assert.ok(content.includes(`SYSPROMPT_${id}`), `System prompt test marker should exist`);

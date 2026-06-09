@@ -345,6 +345,7 @@ async function runPiHeadless(p: RunParams): Promise<BackendResult> {
   const subagentDonePath = join(
     dirname(new URL(import.meta.url).pathname),
     "..",
+    "tools",
     "subagent-done.ts",
   );
 
@@ -421,40 +422,78 @@ async function runPiHeadless(p: RunParams): Promise<BackendResult> {
     let exited = false;          // ← set ONLY by close/exit; drives SIGKILL escalation
     proc.on("exit", () => { exited = true; });
 
+    const emitSnapshot = () => {
+      emit({
+        name: spec.name,
+        finalMessage: getFinalOutput(transcript),
+        transcriptPath: null,
+        exitCode: 0,
+        elapsedMs: Date.now() - startTime,
+        usage,
+        transcript,
+      });
+    };
+
+    const seenAssistantKeys = new Set<string>();
+    const assistantKey = (msg: PiStreamMessage): string => {
+      const anyMsg = msg as any;
+      return anyMsg.responseId
+        ?? `${anyMsg.timestamp ?? ""}:${JSON.stringify(msg.content ?? [])}`;
+    };
+
+    const recordPiMessage = (msg: PiStreamMessage, shouldEmit: boolean): void => {
+      if (msg.role === "assistant") {
+        const key = assistantKey(msg);
+        if (seenAssistantKeys.has(key)) return;
+        seenAssistantKeys.add(key);
+      }
+
+      transcript.push(projectPiMessageToTranscript(msg));
+      if (msg.role === "assistant") {
+        usage.turns++;
+        const u: any = (msg as any).usage;
+        if (u) {
+          usage.input += u.input ?? 0;
+          usage.output += u.output ?? 0;
+          usage.cacheRead += u.cacheRead ?? 0;
+          usage.cacheWrite += u.cacheWrite ?? 0;
+          usage.cost += u.cost?.total ?? 0;
+          usage.contextTokens = u.totalTokens ?? usage.contextTokens;
+        }
+        const stop = (msg as any).stopReason;
+        if (stop === "endTurn" || stop === "stop" || stop === "error") terminalEvent = true;
+      }
+      if (shouldEmit) emitSnapshot();
+    };
+
     const processLine = (line: string) => {
       if (!line.trim()) return;
       let event: any;
       try { event = JSON.parse(line); } catch { return; }
       if (event.type === "message_end" && event.message) {
-        const msg = event.message as PiStreamMessage;
-        transcript.push(projectPiMessageToTranscript(msg));
-        if (msg.role === "assistant") {
-          usage.turns++;
-          const u: any = (msg as any).usage;
-          if (u) {
-            usage.input += u.input ?? 0;
-            usage.output += u.output ?? 0;
-            usage.cacheRead += u.cacheRead ?? 0;
-            usage.cacheWrite += u.cacheWrite ?? 0;
-            usage.cost += u.cost?.total ?? 0;
-            usage.contextTokens = u.totalTokens ?? usage.contextTokens;
-          }
-          const stop = (msg as any).stopReason;
-          if (stop === "endTurn" || stop === "stop" || stop === "error") terminalEvent = true;
-        }
         // Emit a partial snapshot on each message_end (not on every delta line,
         // which would spam). Reflects accumulated transcript + usage so far.
-        emit({
-          name: spec.name,
-          finalMessage: getFinalOutput(transcript),
-          transcriptPath: null,
-          exitCode: 0,
-          elapsedMs: Date.now() - startTime,
-          usage,
-          transcript,
-        });
+        recordPiMessage(event.message as PiStreamMessage, true);
       } else if (event.type === "tool_result_end" && event.message) {
-        transcript.push(projectPiMessageToTranscript(event.message as PiStreamMessage));
+        recordPiMessage(event.message as PiStreamMessage, false);
+      } else if (event.type === "turn_end" && event.message) {
+        // `turn_end` is a terminal stream event from pi. Normally the preceding
+        // assistant message_end carries the same message; recordPiMessage
+        // deduplicates by response id and therefore acts as a race-closer when
+        // message_end was missed.
+        terminalEvent = true;
+        recordPiMessage(event.message as PiStreamMessage, true);
+      } else if (event.type === "agent_end") {
+        // Headless completion should not depend on seeing every message_end
+        // line. Under load, the process can still emit agent_end with the final
+        // messages before close; use it as the authoritative terminal event and
+        // backfill any assistant messages the live stream missed.
+        terminalEvent = true;
+        if (Array.isArray(event.messages)) {
+          for (const msg of event.messages as PiStreamMessage[]) {
+            if (msg.role === "assistant") recordPiMessage(msg, true);
+          }
+        }
       }
     };
 

@@ -1177,6 +1177,19 @@ function detectMux() {
   return getMuxBackend() !== null;
 }
 
+// src/diagnostics/diagnostics.ts
+var ambientUiResolver = () => null;
+function emitDiagnostic(diagnostic, context) {
+  if (diagnostic.audience.human) {
+    const ui = ambientUiResolver();
+    if (ui?.hasUI) ui.ui.notify(diagnostic.message.replace(/\n+$/, ""), "warning");
+    else process.stderr.write(diagnostic.message);
+  }
+  if (diagnostic.audience.structured) {
+    context?.collector?.push(diagnostic);
+  }
+}
+
 // src/backends/select.ts
 var warnedInvalidValues = /* @__PURE__ */ new Set();
 var detectMuxImpl = detectMux;
@@ -1186,10 +1199,12 @@ function selectBackend() {
   if (raw === "headless") return "headless";
   if (raw !== "auto" && !warnedInvalidValues.has(raw)) {
     warnedInvalidValues.add(raw);
-    process.stderr.write(
-      `[pi-interactive-subagent] PI_SUBAGENT_MODE="${raw}" invalid; falling back to auto (valid: pane | headless | auto)
+    emitDiagnostic({
+      code: "invalid-subagent-mode",
+      audience: { human: true },
+      message: `[pi-interactive-subagent] PI_SUBAGENT_MODE="${raw}" invalid; falling back to auto (valid: pane | headless | auto)
 `
-    );
+    });
   }
   return detectMuxImpl() ? "pane" : "headless";
 }

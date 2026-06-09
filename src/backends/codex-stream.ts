@@ -1,5 +1,6 @@
 import type { TranscriptMessage, UsageStats } from "./types.ts";
 import type { ResolvedLaunchSpec } from "../launch/launch-spec.ts";
+import { realpathSync } from "node:fs";
 import { shellEscape } from "../mux/shell.ts";
 
 const CODEX_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
@@ -35,11 +36,17 @@ function tomlBasicStringEscape(s: string): string {
 // unattended subagent. Emitting this as a `-c` override applies the trust for
 // THIS launch only and does NOT cause pi-mux-subagents to write the user's
 // persistent config (Codex itself may still record its own project trust
-// metadata as a side effect). The cwd is embedded as a TOML quoted key so paths
-// containing quotes/backslashes/control characters survive intact. Returns RAW
-// `-c key=value` tokens (no shell escaping); pane callers shell-escape each token.
+// metadata as a side effect). Codex canonicalizes project paths before checking
+// trust (for example macOS `/var` resolves to `/private/var`), so canonicalize
+// the launch cwd when possible; otherwise fall back to the caller-provided path
+// for not-yet-existing test fixtures. The cwd is embedded as a TOML quoted key
+// so paths containing quotes/backslashes/control characters survive intact.
+// Returns RAW `-c key=value` tokens (no shell escaping); pane callers
+// shell-escape each token.
 export function buildCodexProjectTrustArgs(cwd: string): string[] {
-  return ["-c", `projects."${tomlBasicStringEscape(cwd)}".trust_level="trusted"`];
+  let trustPath = cwd;
+  try { trustPath = realpathSync(cwd); } catch {}
+  return ["-c", `projects."${tomlBasicStringEscape(trustPath)}".trust_level="trusted"`];
 }
 
 export function codexSandboxArgs(policy: "guarded" | "unrestricted", transport: "headless" | "pane"): string[] {

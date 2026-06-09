@@ -4,7 +4,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -86,6 +86,27 @@ describe("runPiHeadless tools arg reserves lifecycle tools", () => {
       lastSpawn!.args.includes("--tools"),
       false,
       "unrestricted launches must not emit --tools (lifecycle tools are already available under pi defaults)",
+    );
+  });
+
+  it("loads the pi lifecycle extension from src/tools/subagent-done.ts", async () => {
+    lastSpawn = null;
+    const backend = backendModule.makeHeadlessBackend(ctx);
+    const handle = await backend.launch(
+      { name: "t", task: "hello", cli: "pi" },
+      false,
+    );
+    await backend.watch(handle);
+
+    assert.ok(lastSpawn, "pi should have been spawned");
+    const extIdx = lastSpawn!.args.indexOf("-e");
+    assert.notEqual(extIdx, -1, "headless pi launch must load the lifecycle extension with -e");
+    const extensionPath = lastSpawn!.args[extIdx + 1];
+    assert.match(extensionPath, /src\/tools\/subagent-done\.ts$/);
+    assert.equal(
+      existsSync(extensionPath),
+      true,
+      `headless pi lifecycle extension path must exist on disk: ${extensionPath}`,
     );
   });
 

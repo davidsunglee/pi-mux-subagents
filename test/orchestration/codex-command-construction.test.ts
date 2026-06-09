@@ -1,5 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildCodexExecArgs, buildCodexPaneCmdParts, codexReasoningEffort, codexSandboxArgs } from "../../src/backends/codex-stream.ts";
 
 const baseSpec: any = {
@@ -62,6 +65,24 @@ describe("buildCodexExecArgs — headless guarded", () => {
     // The trust override must be a `-c` value, never written to disk.
     const trustIdx = args.indexOf('projects."/workspace".trust_level="trusted"');
     assert.equal(args[trustIdx - 1], "-c", "trust override must follow a -c token");
+  });
+
+  it("canonicalizes existing cwd paths for the trust override", () => {
+    const root = mkdtempSync(join(tmpdir(), "codex-trust-realpath-"));
+    const target = join(root, "target");
+    const link = join(root, "link");
+    try {
+      mkdirSync(target);
+      symlinkSync(target, link, "dir");
+      const canonical = realpathSync(link);
+      const args = buildCodexExecArgs(baseSpec, { outputLastMessageFile: "/tmp/out.txt", cwd: link });
+      assert.ok(
+        args.some((a) => a === `projects."${canonical}".trust_level="trusted"`),
+        `expected canonical trust override for ${canonical}; got: ${args.join(" ")}`,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("escapes quotes/backslashes in the cwd path for the trust override", () => {

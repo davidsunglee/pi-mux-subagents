@@ -1,10 +1,10 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { copyTestAgents, SLOW_LANE_OPT_IN } from "./harness.ts";
+import { copyTestAgents, EXTENSION_SOURCE, SLOW_LANE_OPT_IN } from "./harness.ts";
 import { makeHeadlessBackend } from "../../src/backends/headless.ts";
 
 const PI_AVAILABLE = (() => {
@@ -28,6 +28,23 @@ describe("coordinator-orchestration-tools", { skip: SHOULD_SKIP, timeout: 120_00
     process.env.PI_SUBAGENT_MODE = "headless";
     dir = mkdtempSync(join(tmpdir(), "pi-coord-tools-"));
     copyTestAgents(dir);
+
+    // This test launches a real pi coordinator via makeHeadlessBackend rather
+    // than through harness.buildPiCommand(), so point project settings at the
+    // checkout under test and disable the globally installed pi-mux package
+    // extension for this temp project. Otherwise the coordinator can
+    // auto-discover an installed package snapshot from the host config, and its
+    // nested subagent_run_serial call would exercise stale code.
+    mkdirSync(join(dir, ".pi"), { recursive: true });
+    writeFileSync(
+      join(dir, ".pi", "settings.json"),
+      `${JSON.stringify({
+        packages: [{ source: "npm:@aphotic/pi-mux-subagents", extensions: [] }],
+        extensions: [EXTENSION_SOURCE],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
     origCwd = process.cwd();
     process.chdir(dir);
   });

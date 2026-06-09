@@ -264,6 +264,37 @@ describe("subagent_resume tool boundary", () => {
     assert.match(pingMsg.message.content, /need more info/);
   });
 
+  it("sessionPath: falls back to ctx.cwd when recorded session cwd is stale", async () => {
+    const staleCwd = join(scratchDir, "deleted-worktree");
+    writeFileSync(
+      strayPath,
+      `${JSON.stringify({ cwd: staleCwd })}\n{"type":"message","role":"user","content":"resume me"}\n`,
+      "utf8",
+    );
+    rmSync(staleCwd, { recursive: true, force: true });
+
+    __test__.setWatchSubagentOverride(async (_running: any, _signal: any) => makeTerminalResult());
+
+    const ctx = makeCtx(scratchDir);
+    const result = await resumeTool.execute(
+      "tc-stale-cwd-fallback",
+      { sessionPath: strayPath, name: "Stale Cwd Resume" },
+      new AbortController().signal,
+      () => {},
+      ctx,
+    );
+    assert.equal(result.details?.status, "started");
+
+    const command = __test__.getLastLaunchCommand();
+    assert.ok(command, "resume tool should record its last launch command");
+    assert.ok(
+      command!.startsWith(`cd '${ctx.cwd}' && `),
+      "stale recorded cwd must fall back to ctx.cwd before launching",
+    );
+
+    await new Promise((r) => setTimeout(r, 50));
+  });
+
   it("sessionPath: defaults to auto-exit and propagates PI_SUBAGENT_AUTO_EXIT=1 in resume env", async () => {
     // Resumed pi-backed subagents default to auto-exit so the follow-up turn
     // closes the pane after normal completion.
@@ -285,6 +316,21 @@ describe("subagent_resume tool boundary", () => {
       command!,
       /PI_SUBAGENT_AUTO_EXIT=1/,
       "default resume must enable auto-exit via PI_SUBAGENT_AUTO_EXIT=1",
+    );
+    assert.match(
+      command!,
+      /PI_SUBAGENT_SESSION=/,
+      "pi resume must propagate PI_SUBAGENT_SESSION so auto-exit can write the done sidecar",
+    );
+    assert.match(
+      command!,
+      /PI_SUBAGENT_NAME=/,
+      "pi resume must propagate PI_SUBAGENT_NAME for lifecycle metadata",
+    );
+    assert.match(
+      command!,
+      /^cd /,
+      "pi resume must cd into the session cwd (or parent ctx.cwd fallback) before launching",
     );
 
     // Drain the fire-and-forget watcher.

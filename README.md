@@ -97,7 +97,13 @@ Choose which CLI each subagent runs under with the `cli` field:
 { "name": "codex worker",  "task": "...", "cli": "codex" }
 ```
 
-`cli: "pi"` (default) gives access to pi lifecycle tools (`subagent_done`, `caller_ping`), skills, and coordinator spawning. `cli: "claude"` runs the Claude Code CLI in headless or pane mode; it trades pi lifecycle features for Claude-native tool access. `cli: "codex"` runs the Codex CLI in headless (codex exec) or pane mode. Like Claude, it trades pi lifecycle features (skills, caller_ping/block-resume) for native Codex tooling; pi skills and tool allowlists are warned-and-ignored. Pane completion is signaled by an in-band subagent_done MCP tool injected per-launch via codex -c overrides — pi-mux-subagents never writes its own MCP/policy/model/thinking configuration to the user's persistent ~/.codex/config.toml. (To run unattended, launches also pass a per-launch `-c projects."<cwd>".trust_level="trusted"` override so Codex skips its interactive project-trust prompt; this is a flag, not a config write, though Codex itself may still record its own unrelated project-trust metadata.) The framework is designed to support additional CLIs (opencode) in the future.
+`cli: "pi"` (default) gives access to pi lifecycle tools (`subagent_done`, `caller_ping`), skills, and coordinator spawning. `cli: "claude"` runs the Claude Code CLI in headless or pane mode; it trades pi lifecycle features for Claude-native tool access. `cli: "codex"` runs the Codex CLI in headless (codex exec) or pane mode. Like Claude, it trades pi lifecycle features (skills, caller_ping/block-resume) for native Codex tooling; pi skills and tool allowlists are warned-and-ignored. The framework is designed to support additional CLIs (opencode) in the future.
+
+Codex-specific notes:
+
+- Pane completion is tool-first: Codex pane prompts instruct the model to call `subagent_done(message=…)` with the final summary before any final answer, then send no further output. The MCP completion tool and Codex policy/model/thinking settings are injected per launch with `codex -c` overrides; pi-mux-subagents does not persist its own configuration to `~/.codex/config.toml`.
+- To run unattended, launches pass a per-launch `-c projects."<cwd>".trust_level="trusted"` override so Codex skips its interactive project-trust prompt. This is a flag, not a config write, though Codex itself may still record unrelated project-trust metadata.
+- Codex has no dedicated system-prompt channel. Agent identity that would normally be delivered with `system-prompt: append` or `system-prompt: replace` is delivered additively in the task body instead; `replace` emits a runtime warning because exact base-instruction replacement is not representable on Codex.
 
 ### Execution policy
 
@@ -135,6 +141,10 @@ Codex guarded mode is sandbox-enforced (workspace-write filesystem + approval po
 
 For backends without an implemented guarded mode (pi today), an explicit `guarded` request emits a one-line warning and continues with current behavior rather than rejecting the launch. The implicit default does not warn.
 
+### Runtime diagnostics and warnings
+
+Warnings are routed through one diagnostics path. In an interactive TUI they appear via `ui.notify`; in headless or non-UI contexts they fall back to stderr. Caller-relevant warnings — such as dropped `skills`/`tools`, an explicit `guarded` request on a backend without guarded mode, or Codex `system-prompt: replace` fallback — are also surfaced additively as `details.warnings` on the bare `subagent` result or per task in `subagent_run_serial` / `subagent_run_parallel` results. Human-only process diagnostics are not mirrored into `details.warnings`.
+
 ### Headless vs mux
 
 Control the execution backend with the `PI_SUBAGENT_MODE` environment variable:
@@ -160,7 +170,17 @@ When both are set, `autoExit: true` takes precedence on turn completion. An `int
 
 ## Backend selection
 
-The framework auto-detects an available mux when an interactive subagent is requested and falls back to headless when no mux is found. Adapters are checked in this fixed detection order: **herdr, cmux, tmux, zellij, wezterm**. Override the selection with `PI_SUBAGENT_MUX=<name>` to force a specific adapter or fail fast if that adapter is unavailable.
+The framework auto-detects an available mux when an interactive subagent is requested and falls back to headless when no mux is found.
+
+Compatible mux implementations:
+
+1. `herdr`
+2. `cmux`
+3. `tmux`
+4. `zellij`
+5. `wezterm`
+
+The same order is used for auto-detection. Override the selection with `PI_SUBAGENT_MUX=<name>` to force one of those adapters or fail fast if that adapter is unavailable.
 
 ### `pi-mux-detect`
 
