@@ -1,6 +1,4 @@
 {
-  "packages": [
-  ],
   "extensions": [
     "-../src/index.ts"
   ],
