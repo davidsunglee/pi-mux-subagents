@@ -11,7 +11,6 @@ export function hasCommand(command: string): boolean {
   let available: boolean;
   if (process.platform === "win32") {
     // `command -v` is not available in Windows shells, so prefer `where.exe`.
-    // Upstream PR #39: https://github.com/HazAT/pi-interactive-subagents/pull/39
     try {
       execFileSync("where.exe", [command], { stdio: "ignore" });
       available = true;

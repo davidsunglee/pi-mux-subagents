@@ -1252,7 +1252,7 @@ function selectBackend() {
     emitDiagnostic({
       code: "invalid-subagent-mode",
       audience: { human: true },
-      message: `[pi-interactive-subagent] PI_SUBAGENT_MODE="${raw}" invalid; falling back to auto (valid: pane | headless | auto)
+      message: `[pi-mux-subagents] PI_SUBAGENT_MODE="${raw}" invalid; falling back to auto (valid: pane | headless | auto)
 `
     });
   }

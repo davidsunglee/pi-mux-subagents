@@ -151,7 +151,7 @@ export function resolveResumeLaunchBehavior(params: { autoExit?: boolean }): {
 
 // Survive /reload: clear timers and abort poll loops from the previous module load.
 // /reload re-imports this file, giving fresh module-level state, but closures from
-// the old module keep running. See https://github.com/HazAT/pi-interactive-subagents/issues/5
+// the old module keep running.
 const WIDGET_INTERVAL_KEY = Symbol.for("pi-subagents/widget-interval");
 const STATUS_INTERVAL_KEY = Symbol.for("pi-subagents/status-interval");
 const POLL_ABORT_KEY = Symbol.for("pi-subagents/poll-abort-controller");
@@ -957,7 +957,7 @@ export function warnClaudeSkillsDropped(
   emitDiagnostic({
     code: "skills-dropped",
     audience: { human: true, structured: true },
-    message: `[pi-interactive-subagent] ${subagentName}: ignoring skills=${effectiveSkills} on Claude path — not supported in v1\n`,
+    message: `[pi-mux-subagents] ${subagentName}: ignoring skills=${effectiveSkills} on Claude path — not supported in v1\n`,
   }, context);
 }
 
@@ -972,13 +972,13 @@ export function warnCodexUnsupportedFeatures(
     emitDiagnostic({
       code: "skills-dropped",
       audience: { human: true, structured: true },
-      message: `[pi-interactive-subagent] ${subagentName}: ignoring skills=${effectiveSkills} on Codex path — not supported in v1\n`,
+      message: `[pi-mux-subagents] ${subagentName}: ignoring skills=${effectiveSkills} on Codex path — not supported in v1\n`,
     }, context);
   if (effectiveTools && effectiveTools.trim() !== "")
     emitDiagnostic({
       code: "tools-dropped",
       audience: { human: true, structured: true },
-      message: `[pi-interactive-subagent] ${subagentName}: ignoring tools=${effectiveTools} on Codex path — pi tool allowlists are not applied (the internal subagent_done MCP tool is always available)\n`,
+      message: `[pi-mux-subagents] ${subagentName}: ignoring tools=${effectiveTools} on Codex path — pi tool allowlists are not applied (the internal subagent_done MCP tool is always available)\n`,
     }, context);
   // Codex has no system-prompt channel, so identity always rides the task body
   // (see identity-delivery.ts). `append` is naturally additive and needs no
@@ -989,7 +989,7 @@ export function warnCodexUnsupportedFeatures(
     emitDiagnostic({
       code: "codex-system-prompt-replace",
       audience: { human: true, structured: true },
-      message: `[pi-interactive-subagent] ${subagentName}: system-prompt: replace is not representable on Codex (no base-instruction channel to replace) — identity was delivered additively in the task body\n`,
+      message: `[pi-mux-subagents] ${subagentName}: system-prompt: replace is not representable on Codex (no base-instruction channel to replace) — identity was delivered additively in the task body\n`,
     }, context);
 }
 

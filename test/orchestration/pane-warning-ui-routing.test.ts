@@ -82,7 +82,7 @@ describe("pane launch warnings", () => {
     }
 
     assert.equal(
-      stderr.includes("[pi-interactive-subagent]"),
+      stderr.includes("[pi-mux-subagents]"),
       false,
       `interactive pane warnings must not write raw stderr because it corrupts the active TUI editor; got ${JSON.stringify(stderr)}`,
     );

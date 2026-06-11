@@ -51,23 +51,7 @@ Group commits by type using conventional commit prefixes:
 
 Format as markdown. Omit empty sections. Strip the `type(scope):` prefix from each line for readability.
 
-**Always start the changelog with this install block** (hardcoded):
-
-````markdown
-Install:
-
-```bash
-pi install git:github.com/HazAT/pi-interactive-subagents@v<VERSION>
-```
-
-Or latest:
-
-```bash
-pi install git:github.com/HazAT/pi-interactive-subagents
-```
-````
-
-Then add the grouped commit sections below it.
+Start with grouped commit sections.
 
 Example output:
 

@@ -1,5 +1,5 @@
 /**
- * Integration test harness for pi-interactive-subagents.
+ * Integration test harness for pi-mux-subagents.
  *
  * Provides utilities to:
  * - Detect available mux backends (cmux, tmux, zellij, herdr)

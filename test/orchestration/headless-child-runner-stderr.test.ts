@@ -60,7 +60,7 @@ describe("headless child-runner stderr diagnostics preserved (non-migrated)", ()
       assert.equal(result.transcriptPath, null, "no sessionId -> transcriptPath stays null");
       assert.ok(
         stderr.includes(
-          "[pi-interactive-subagent] diag: no system/init event seen — " +
+          "[pi-mux-subagents] diag: no system/init event seen — " +
             "transcriptPath will be null (Claude stream format may have changed)\n",
         ),
         `expected the unchanged raw stderr warning; got ${JSON.stringify(stderr)}`,

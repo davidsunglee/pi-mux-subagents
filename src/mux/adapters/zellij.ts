@@ -16,7 +16,6 @@ const execFileAsync = promisify(execFile);
 /**
  * Pane-scoped zellij actions that must target a specific pane via --pane-id
  * (the ZELLIJ_PANE_ID env var is ignored by most of these).
- * See https://github.com/HazAT/pi-interactive-subagents/issues/19
  */
 const ZELLIJ_PANE_SCOPED_ACTIONS = new Set([
   "close-pane",

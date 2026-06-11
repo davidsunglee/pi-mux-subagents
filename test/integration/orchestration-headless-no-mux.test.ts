@@ -49,6 +49,12 @@ const MUX_ENV_KEYS = [
   "ZELLIJ",
   "ZELLIJ_SESSION_NAME",
   "WEZTERM_UNIX_SOCKET",
+  // herdr detection keys off HERDR_ENV; HERDR_PANE_ID/HERDR_SOCKET_PATH are
+  // cleared too so the suite is mux-free when run from inside a live herdr
+  // session (otherwise selectBackend's auto path detects herdr → "pane").
+  "HERDR_ENV",
+  "HERDR_PANE_ID",
+  "HERDR_SOCKET_PATH",
 ];
 
 async function runRegisteredTool(

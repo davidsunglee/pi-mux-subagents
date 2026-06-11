@@ -214,9 +214,6 @@ export function makeHeadlessBackend(ctx: {
         abort,
       };
       const emit = (snap: BackendResult): void => emitPartial(entry, snap);
-      // Unknown/typo cli values are documented to fall back to the pi path
-      // (see OrchestrationTaskSchema.cli), so they must carry pi session/activity
-      // metadata too. Only Claude and Codex own the late-bound metadata path.
       const isPiLike = isPiLikeCli(spec.effectiveCli);
       let piActivityFile: string | undefined;
       if (isPiLike) {
@@ -306,7 +303,8 @@ interface RunParams {
 function makeAbortHandler(proc: ChildProcess, isExited: () => boolean): () => void {
   return () => {
     try { proc.kill("SIGTERM"); } catch {}
-    // Do not keep the event loop open after the child exits normally.
+    // unref so the 5s escalation timer does not hold the event loop open
+    // after the child has already exited normally (review-I1).
     setTimeout(() => {
       if (!isExited()) {
         try { proc.kill("SIGKILL"); } catch {}
@@ -619,9 +617,6 @@ async function runPiHeadless(p: RunParams): Promise<BackendResult> {
   });
 }
 
-// Claude CLI children cannot call pi's `caller_ping` tool; that extension is
-// only loaded inside pi children. This runner therefore never populates
-// `BackendResult.ping`, and Claude async orchestration tasks run to terminal.
 async function runClaudeHeadless(p: RunParams): Promise<BackendResult> {
   const { spec, startTime, abort, ctx, emitPartial: emit } = p;
   const transcript: TranscriptMessage[] = [];
@@ -631,7 +626,7 @@ async function runClaudeHeadless(p: RunParams): Promise<BackendResult> {
   let terminalResult: ReturnType<typeof parseClaudeResult> | null = null;
   let sessionId: string | undefined;
 
-  warnClaudeSkillsDropped(spec.name, spec.effectiveSkills, p.diagnostics);
+  warnClaudeSkillsDropped(spec.name, spec.effectiveSkills);
 
   // Claude always uses direct task delivery — the Claude CLI prompt argument does
   // not support @file substitution, so spec.taskDelivery is ignored on this path.
@@ -662,7 +657,7 @@ async function runClaudeHeadless(p: RunParams): Promise<BackendResult> {
     const lb = new LineBuffer();
     let wasAborted = false;
     let exited = false;
-    // Guard against double-resolve if both `error` and `close` fire.
+    // review I3: guard against double-resolve if both `error` and `close` fire.
     let settled = false;
     const settle = (r: BackendResult): void => {
       if (settled) return;
@@ -754,23 +749,24 @@ async function runClaudeHeadless(p: RunParams): Promise<BackendResult> {
       const elapsedMs = Date.now() - startTime;
       const exitCode = code ?? 0;
       const finalMessage = terminalResult?.finalOutput ?? "";
-      // Warn if a clean stream ended without system/init; Claude's stream
-      // format may have changed.
+      // review I1: warn if the stream ended without a system/init session_id
+      // on an otherwise-clean exit — likely means Claude's stream format changed.
       if (!sessionId && exitCode === 0) {
         process.stderr.write(
-          `[pi-interactive-subagent] ${spec.name}: no system/init event seen — ` +
+          `[pi-mux-subagents] ${spec.name}: no system/init event seen — ` +
             `transcriptPath will be null (Claude stream format may have changed)\n`,
         );
       }
-      // Archival may throw (EACCES, ENOSPC, race vs. session deletion). Fall
-      // through to transcriptPath=null instead of rejecting the close handler.
+      // review I2: archival may throw (EACCES, ENOSPC, race vs. session file
+      // deletion). Fall through to transcriptPath=null with a warning rather
+      // than letting the async close-handler reject unhandled.
       let transcriptPath: string | null = null;
       if (sessionId) {
         try {
           transcriptPath = await archiveClaudeTranscript(sessionId);
         } catch (e: any) {
           process.stderr.write(
-            `[pi-interactive-subagent] transcript archive failed: ${e?.message ?? e}\n`,
+            `[pi-mux-subagents] transcript archive failed: ${e?.message ?? e}\n`,
           );
         }
       }
@@ -816,7 +812,7 @@ async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
   // Preferred over benign stderr (e.g. "Reading prompt from stdin...") when the
   // child exits non-zero so the real model/API/config failure is not masked.
   let structuredError: string | undefined;
-  const rawLines: string[] = []; // teed JSONL for archival
+  const rawLines: string[] = [];
 
   warnCodexUnsupportedFeatures(spec.name, spec.effectiveSkills, spec.effectiveTools, spec.systemPromptMode, p.diagnostics);
 
@@ -829,7 +825,10 @@ async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
   // deterministically rather than spawning a `codex exec resume` with no id.
   if (spec.resumeSessionId !== undefined && spec.resumeSessionId.trim() === "") {
     return {
-      name: spec.name, finalMessage: "", transcriptPath: null, exitCode: 1,
+      name: spec.name,
+      finalMessage: "",
+      transcriptPath: null,
+      exitCode: 1,
       elapsedMs: Date.now() - startTime,
       error: "codex resume requested without a session id",
     };
@@ -848,27 +847,28 @@ async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
       });
     } catch (err: any) {
       resolve({
-        name: spec.name, finalMessage: "", transcriptPath: null, exitCode: 1,
+        name: spec.name,
+        finalMessage: "",
+        transcriptPath: null,
+        exitCode: 1,
         elapsedMs: Date.now() - startTime,
         error: err?.message ?? String(err),
       });
       return;
     }
 
-    // Deliver the prompt via stdin. spec.fullTask carries the identity roleBlock
-    // — Codex declares "no system-prompt channel" in the identity-delivery seam
-    // (identity-delivery.ts), so resolveLaunchSpec keeps identityInSystemPrompt
-    // false for Codex and the identity ALWAYS rides the prompt body here, even
-    // when the agent sets system-prompt: append|replace.
+    // Deliver the prompt via stdin. Codex has no separate system prompt channel
+    // in this path, so resolveLaunchSpec keeps identity in spec.fullTask.
     try {
       proc.stdin!.write(spec.fullTask);
       proc.stdin!.end();
-    } catch { /* stdin may already be closed on a failed spawn */ }
+    } catch {
+      // stdin may already be closed on a failed spawn
+    }
 
     const lb = new LineBuffer();
     let wasAborted = false;
     let exited = false;
-    // Guard against double-resolve if both `error` and `close` fire.
     let settled = false;
     const settle = (r: BackendResult): void => {
       if (settled) return;
@@ -896,7 +896,6 @@ async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
         if (sawAssistant) {
           usage.turns += 1;
           hasRealUsage = true;
-          // Emit a partial on assistant events (not on every fragment).
           emit({
             name: spec.name,
             finalMessage: getFinalOutput(transcript),
@@ -912,7 +911,6 @@ async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
 
       const u = parseCodexUsage(event);
       if (u) {
-        // Merge token fields; preserve the runner-maintained `turns`.
         usage.input = u.input;
         usage.output = u.output;
         usage.cacheRead = u.cacheRead;
@@ -921,6 +919,7 @@ async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
         usage.contextTokens = u.contextTokens;
         hasRealUsage = true;
       }
+
       const errMsg = parseCodexError(event);
       if (errMsg) structuredError = errMsg;
 
@@ -941,7 +940,10 @@ async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
 
     proc.on("error", (err: NodeJS.ErrnoException) => {
       settle({
-        name: spec.name, finalMessage: "", transcriptPath: null, exitCode: 1,
+        name: spec.name,
+        finalMessage: "",
+        transcriptPath: null,
+        exitCode: 1,
         elapsedMs: Date.now() - startTime,
         error: err.code === "ENOENT"
           ? "codex CLI not found on PATH"
@@ -956,14 +958,12 @@ async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
       const elapsedMs = Date.now() - startTime;
       const exitCode = code ?? 0;
 
-      // Final message: prefer the --output-last-message file, fall back to the
-      // last assistant text in the projected transcript.
       let finalMessage = "";
-      try { finalMessage = readFileSync(outFile, "utf8").trim(); } catch {}
+      try {
+        finalMessage = readFileSync(outFile, "utf8").trim();
+      } catch {}
       if (!finalMessage) finalMessage = getFinalOutput(transcript);
 
-      // Archive the teed JSONL stream. Failure (EACCES, ENOSPC) degrades to
-      // transcriptPath=null rather than rejecting the close handler.
       let transcriptPath: string | null;
       try {
         const destDir = join(homedir(), ".pi", "agent", "sessions", "codex-cli");
@@ -973,43 +973,74 @@ async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
         transcriptPath = dest;
       } catch (e: any) {
         process.stderr.write(
-          `[pi-interactive-subagent] codex transcript archive failed: ${e?.message ?? e}\n`,
+          `[pi-mux-subagents] codex transcript archive failed: ${e?.message ?? e}\n`,
         );
         transcriptPath = null;
       }
 
-      // Warn if a clean stream ended without a thread.started session id; resume
-      // will be unavailable. Never fabricate an id.
       if (exitCode === 0 && !sessionId) {
         process.stderr.write(
-          `[pi-interactive-subagent] ${spec.name}: no thread.started session id seen — ` +
+          `[pi-mux-subagents] ${spec.name}: no thread.started session id seen - ` +
             `resume will be unavailable (Codex JSON format may have changed)\n`,
         );
       }
 
       if (wasAborted) {
-        settle({ name: spec.name, finalMessage, transcriptPath, exitCode: 1, elapsedMs,
-                  error: "aborted", sessionId, sessionKey: sessionId,
-                  ...(hasRealUsage ? { usage } : {}), transcript });
+        settle({
+          name: spec.name,
+          finalMessage,
+          transcriptPath,
+          exitCode: 1,
+          elapsedMs,
+          error: "aborted",
+          sessionId,
+          sessionKey: sessionId,
+          ...(hasRealUsage ? { usage } : {}),
+          transcript,
+        });
         return;
       }
       if (exitCode !== 0) {
-        settle({ name: spec.name, finalMessage, transcriptPath, exitCode, elapsedMs,
-                  error: structuredError || stderr.trim() || `codex exited with code ${exitCode}`,
-                  sessionId, sessionKey: sessionId,
-                  ...(hasRealUsage ? { usage } : {}), transcript });
+        settle({
+          name: spec.name,
+          finalMessage,
+          transcriptPath,
+          exitCode,
+          elapsedMs,
+          error: structuredError || stderr.trim() || `codex exited with code ${exitCode}`,
+          sessionId,
+          sessionKey: sessionId,
+          ...(hasRealUsage ? { usage } : {}),
+          transcript,
+        });
         return;
       }
       if (!sawTerminal) {
-        settle({ name: spec.name, finalMessage, transcriptPath, exitCode: 1, elapsedMs,
-                  error: structuredError || "child exited without completion event",
-                  sessionId, sessionKey: sessionId,
-                  ...(hasRealUsage ? { usage } : {}), transcript });
+        settle({
+          name: spec.name,
+          finalMessage,
+          transcriptPath,
+          exitCode: 1,
+          elapsedMs,
+          error: structuredError || "child exited without completion event",
+          sessionId,
+          sessionKey: sessionId,
+          ...(hasRealUsage ? { usage } : {}),
+          transcript,
+        });
         return;
       }
-      settle({ name: spec.name, finalMessage, transcriptPath, exitCode: 0, elapsedMs,
-                sessionId, sessionKey: sessionId,
-                ...(hasRealUsage ? { usage } : {}), transcript });
+      settle({
+        name: spec.name,
+        finalMessage,
+        transcriptPath,
+        exitCode: 0,
+        elapsedMs,
+        sessionId,
+        sessionKey: sessionId,
+        ...(hasRealUsage ? { usage } : {}),
+        transcript,
+      });
     });
   });
 }
@@ -1018,7 +1049,7 @@ async function archiveClaudeTranscript(sessionId: string): Promise<string | null
   const sourceFile = await findClaudeSessionFile(sessionId, 2000);
   if (!sourceFile) {
     process.stderr.write(
-      `[pi-interactive-subagent] Claude session file ${sessionId}.jsonl not found ` +
+      `[pi-mux-subagents] Claude session file ${sessionId}.jsonl not found ` +
         `under ~/.claude/projects/*/ after 2s; transcriptPath will be null.\n`,
     );
     return null;

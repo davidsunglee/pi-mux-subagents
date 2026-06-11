@@ -20,7 +20,7 @@ export function selectBackend(): BackendKind {
       code: "invalid-subagent-mode",
       audience: { human: true },
       message:
-        `[pi-interactive-subagent] PI_SUBAGENT_MODE="${raw}" invalid; ` +
+        `[pi-mux-subagents] PI_SUBAGENT_MODE="${raw}" invalid; ` +
         `falling back to auto (valid: pane | headless | auto)\n`,
     });
   }

@@ -796,7 +796,7 @@ export function warnGuardedPolicyUnsupported(
     code: "guarded-policy-unsupported",
     audience: { human: true, structured: true },
     message:
-      `[pi-interactive-subagent] ${spec.name}: execution-policy=guarded requested but ` +
+      `[pi-mux-subagents] ${spec.name}: execution-policy=guarded requested but ` +
       `the '${spec.effectiveCli}' backend has no guarded mode — running with current ` +
       `(unrestricted) behavior.\n`,
   }, context);
