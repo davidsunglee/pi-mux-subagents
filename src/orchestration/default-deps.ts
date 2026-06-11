@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { makeHeadlessBackend } from "../backends/headless.ts";
 import { makePaneBackend } from "../backends/pane.ts";
@@ -37,6 +38,7 @@ import type {
 export function makeDefaultDeps(ctx: {
   sessionManager: ExtensionContext["sessionManager"];
   cwd: string;
+  isProjectTrusted?: () => boolean;
 }): LauncherDeps {
   const isHeadless = selectBackend() === "headless";
   const backend: Backend = isHeadless ? makeHeadlessBackend(ctx) : makePaneBackend(ctx);
@@ -51,7 +53,24 @@ export function makeDefaultDeps(ctx: {
       const params: BackendLaunchParams = task;
       const handle = await backend.launch(params, defaultFocus, signal, diagnostics);
       if (isHeadless) {
-        const agentDefs = task.agent ? loadAgentDefaults(task.agent) : null;
+        // Gate this parent-side project-local agent lookup on the same
+        // project-trust decision and project root the backend resolver uses, so
+        // untrusted `.pi/agents/` frontmatter cannot influence orchestration
+        // bookkeeping (recorded cli/status source, interactive) even though the
+        // child launch itself already runs through the gated resolver. Mirrors
+        // resolveLaunchSpec's preResolvedTargetCwd derivation from task.cwd.
+        const projectTrusted = ctx.isProjectTrusted ? ctx.isProjectTrusted() : true;
+        const preResolvedTargetCwd = task.cwd
+          ? task.cwd.startsWith("/")
+            ? task.cwd
+            : join(ctx.cwd, task.cwd)
+          : null;
+        const agentDefs = task.agent
+          ? loadAgentDefaults(task.agent, {
+              projectRoot: preResolvedTargetCwd ?? ctx.cwd,
+              projectTrusted,
+            })
+          : null;
         const interactive = resolveEffectiveInteractive({ ...task, name: handle.name }, agentDefs);
         // Mirror backend.launch()'s CLI resolution: explicit task param wins,
         // then agent frontmatter `cli`, else pi (unknown values fall back to pi).

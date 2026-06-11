@@ -114,3 +114,58 @@ describe("makeDefaultDeps headless registration honors agent frontmatter cli", (
     }
   });
 });
+
+describe("makeDefaultDeps headless registration gates project-local agent frontmatter on trust", () => {
+  let origMode: string | undefined;
+  let origCwd: string;
+  let tmp: string;
+  before(() => {
+    origMode = process.env.PI_SUBAGENT_MODE;
+    origCwd = process.cwd();
+    tmp = mkdtempSync(join(tmpdir(), "untrusted-fm-"));
+    mkdirSync(join(tmp, ".pi", "agents"), { recursive: true });
+    writeFileSync(
+      join(tmp, ".pi", "agents", "untrusted-fm-agent.md"),
+      "---\ncli: codex\n---\n\nUntrusted project-local agent selecting codex via frontmatter.\n",
+    );
+  });
+  after(() => {
+    process.chdir(origCwd);
+    if (origMode === undefined) delete process.env.PI_SUBAGENT_MODE;
+    else process.env.PI_SUBAGENT_MODE = origMode;
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("ignores untrusted project-local frontmatter so cli falls back to pi", async () => {
+    process.env.PI_SUBAGENT_MODE = "headless";
+    process.chdir(tmp);
+    const deps = makeDefaultDeps({
+      sessionManager: {
+        getSessionFile: () => join(tmp, "session.jsonl"),
+        getSessionId: () => "parent",
+        getSessionDir: () => tmp,
+      } as any,
+      cwd: tmp,
+      isProjectTrusted: () => false,
+    });
+    const ac = new AbortController();
+    ac.abort();
+    const handle = await deps.launch({ agent: "untrusted-fm-agent", task: "t" }, false, ac.signal);
+    try {
+      const running = subagentsTestHooks.getRunningSubagents().get(handle.id);
+      assert.ok(running, "subagent must be registered in the headless registry");
+      assert.equal(
+        running.cli,
+        "pi",
+        "untrusted project-local frontmatter cli must be ignored; defaults to pi",
+      );
+      assert.equal(
+        running.statusState?.source,
+        "pi",
+        "untrusted frontmatter must not flip status semantics to claude",
+      );
+    } finally {
+      unregisterHeadlessSubagent(handle.id);
+    }
+  });
+});

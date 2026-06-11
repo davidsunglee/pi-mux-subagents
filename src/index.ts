@@ -301,13 +301,24 @@ function parseAgentDefinition(content: string, fallbackName: string): AgentDefin
   };
 }
 
-function discoverAgentDefinitions(): ListedAgentDefinition[] {
+function discoverAgentDefinitions(
+  opts?: { projectRoot?: string; projectTrusted?: boolean },
+): ListedAgentDefinition[] {
+  const projectRoot = opts?.projectRoot ?? process.cwd();
+  // Gate project-local `.pi/agents/` discovery on the parent session's
+  // effective project-trust decision (mirrors `loadAgentDefaults`). When the
+  // project is untrusted, repo-supplied agent frontmatter must not surface in
+  // the listing — otherwise an untrusted repo could inject agent names,
+  // descriptions, and models into the parent-side tool surface before trust.
+  const projectTrusted = opts?.projectTrusted !== false;
   const agents = new Map<string, ListedAgentDefinition>();
   const dirs: Array<{ path: string; source: AgentSource }> = [
     { path: getBundledAgentsDir(), source: "package" },
     { path: join(getAgentConfigDir(), "agents"), source: "global" },
-    { path: join(process.cwd(), ".pi", "agents"), source: "project" },
   ];
+  if (projectTrusted) {
+    dirs.push({ path: join(projectRoot, ".pi", "agents"), source: "project" });
+  }
 
   for (const { path: dir, source } of dirs) {
     if (!existsSync(dir)) continue;
@@ -2365,8 +2376,15 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         "Project-local agents override global ones with the same name.",
       parameters: Type.Object({}),
 
-      async execute() {
-        const list = discoverAgentDefinitions().filter((agent) => !agent.disableModelInvocation);
+      async execute(_toolCallId: string, _params: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+        // Thread the parent session's project-trust decision so untrusted
+        // project-local `.pi/agents/` definitions are skipped, matching the
+        // gate `resolveLaunchSpec` applies before launching a child.
+        const projectTrusted = ctx?.isProjectTrusted ? ctx.isProjectTrusted() : true;
+        const list = discoverAgentDefinitions({
+          projectRoot: ctx?.cwd,
+          projectTrusted,
+        }).filter((agent) => !agent.disableModelInvocation);
 
         if (list.length === 0) {
           return {

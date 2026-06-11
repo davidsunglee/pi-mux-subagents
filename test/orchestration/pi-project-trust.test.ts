@@ -330,6 +330,109 @@ describe("untrusted project-local agent frontmatter cannot bootstrap launch beha
     }
   });
 
+  it("subagents_list omits untrusted project-local agents from content and details.agents", async () => {
+    const root = mkdtempSync(join(tmpdir(), "list-untrusted-"));
+    try {
+      mkdirSync(join(root, ".pi", "agents"), { recursive: true });
+      writeFileSync(
+        join(root, ".pi", "agents", "evil-list-agent.md"),
+        "---\ndescription: should not be listed\nmodel: claude-opus-4-8\n---\nbody\n",
+        "utf8",
+      );
+
+      const tools = new Map<string, any>();
+      const fakeApi = {
+        registerTool(spec: any) { tools.set(spec.name, spec); },
+        registerCommand() {},
+        registerMessageRenderer() {},
+        sendUserMessage() {},
+        sendMessage() {},
+        on() {},
+      };
+      subagentsExtension(fakeApi as any);
+      const listTool = tools.get("subagents_list");
+      assert.ok(listTool, "subagents_list must be registered");
+
+      const untrustedCtx = {
+        sessionManager: {
+          getSessionFile: () => join(root, "parent.jsonl"),
+          getSessionId: () => "parent",
+          getSessionDir: () => root,
+        },
+        cwd: root,
+        isProjectTrusted: () => false,
+      };
+      const result = await listTool.execute(
+        "tc-list-untrusted",
+        {},
+        new AbortController().signal,
+        () => {},
+        untrustedCtx,
+      );
+      const agents = result.details?.agents ?? [];
+      assert.ok(
+        !agents.some((a: any) => a.name === "evil-list-agent"),
+        "untrusted project-local agent must be absent from details.agents",
+      );
+      const text = result.content?.[0]?.text ?? "";
+      assert.ok(
+        !text.includes("evil-list-agent"),
+        "untrusted project-local agent must be absent from listed content",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("subagents_list includes project-local agents when project trust is granted", async () => {
+    const root = mkdtempSync(join(tmpdir(), "list-trusted-"));
+    try {
+      mkdirSync(join(root, ".pi", "agents"), { recursive: true });
+      writeFileSync(
+        join(root, ".pi", "agents", "ok-list-agent.md"),
+        "---\ndescription: should be listed\nmodel: claude-opus-4-8\n---\nbody\n",
+        "utf8",
+      );
+
+      const tools = new Map<string, any>();
+      const fakeApi = {
+        registerTool(spec: any) { tools.set(spec.name, spec); },
+        registerCommand() {},
+        registerMessageRenderer() {},
+        sendUserMessage() {},
+        sendMessage() {},
+        on() {},
+      };
+      subagentsExtension(fakeApi as any);
+      const listTool = tools.get("subagents_list");
+      assert.ok(listTool, "subagents_list must be registered");
+
+      const trustedCtx = {
+        sessionManager: {
+          getSessionFile: () => join(root, "parent.jsonl"),
+          getSessionId: () => "parent",
+          getSessionDir: () => root,
+        },
+        cwd: root,
+        isProjectTrusted: () => true,
+      };
+      const result = await listTool.execute(
+        "tc-list-trusted",
+        {},
+        new AbortController().signal,
+        () => {},
+        trustedCtx,
+      );
+      const agents = result.details?.agents ?? [];
+      assert.ok(
+        agents.some((a: any) => a.name === "ok-list-agent" && a.source === "project"),
+        "trusted project-local agent must appear in details.agents",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("loadAgentDefaults skips the project-local path when projectTrusted is false", () => {
     const root = mkdtempSync(join(tmpdir(), "untrusted-load-"));
     try {
