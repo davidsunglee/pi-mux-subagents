@@ -141,6 +141,21 @@ Codex guarded mode is sandbox-enforced (workspace-write filesystem + approval po
 
 For backends without an implemented guarded mode (pi today), an explicit `guarded` request emits a one-line warning and continues with current behavior rather than rejecting the launch. The implicit default does not warn.
 
+### Project trust
+
+Project trust and execution policy are **separate** dimensions. Project trust is a launch-time *input-loading* decision — whether a backend may read project-local settings, resources, packages, extensions, and skills from the directory it starts in. Execution policy (above) is the *autonomy/sandbox* decision — how much the backend may do once running. A subagent can be trusted to load a repo's local config while still running under `guarded` autonomy, and vice versa.
+
+Backends prompt for project trust the first time they start in an unfamiliar directory. Since subagents run unattended, an unanswered prompt would stall the launch, and a non-interactive backend might instead silently skip project-local input. pi-mux-subagents therefore applies a **per-launch** trust approval for each backend it starts on your behalf — for this run only, never writing your persistent trust state (though a backend may record its own trust metadata as a side effect):
+
+| Backend | Per-launch trust handling |
+| --- | --- |
+| **pi** | Pane and headless launches pass `--approve`, Pi's one-run project-trust override (Pi ≥ 0.79.1), so the child loads project-local input without stalling on the trust prompt. |
+| **Claude** | Headless launches run with `-p` (Claude skips the workspace-trust dialog in non-interactive mode); pane launches export `CLAUDE_CODE_SANDBOXED=1`, which short-circuits Claude's trust check. Both only bypass the trust dialog, not tool permissions. |
+| **Codex** | Pane and headless launches pass a per-launch `-c projects."<cwd>".trust_level="trusted"` override so Codex skips its interactive project-trust prompt. This is a flag, not a config write. |
+| **OpenCode** (future) | Will follow the same pattern: a per-launch trust approval for the child run, kept separate from execution policy. |
+
+This extension also performs its **own** project-local `.pi/agents/` discovery to resolve agent frontmatter (model, tools, skills, `execution-policy`, `cwd`, …) before launching. That parent-side discovery is gated on Pi's effective project-trust decision via `ctx.isProjectTrusted()` (Pi ≥ 0.79.1): when the parent's project is **not** trusted, project-local `.pi/agents/` files are ignored so an untrusted repository cannot bootstrap launch behavior — including `execution-policy: unrestricted` or a `cwd` override — before trust is established. Global `~/.pi/agent/agents/` and bundled agents are unaffected.
+
 ### Runtime diagnostics and warnings
 
 Warnings are routed through one diagnostics path. In an interactive TUI they appear via `ui.notify`; in headless or non-UI contexts they fall back to stderr. Caller-relevant warnings — such as dropped `skills`/`tools`, an explicit `guarded` request on a backend without guarded mode, or Codex `system-prompt: replace` fallback — are also surfaced additively as `details.warnings` on the bare `subagent` result or per task in `subagent_run_serial` / `subagent_run_parallel` results. Human-only process diagnostics are not mirrored into `details.warnings`.

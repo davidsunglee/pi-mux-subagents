@@ -74,6 +74,7 @@ import {
   getArtifactDir,
   getAgentConfigDir,
   buildPiPromptArgs,
+  buildPiProjectTrustArgs,
 } from "./launch/launch-spec.ts";
 import { composePanePrompt, resolvePaneCompletionProtocol, assertNever } from "./launch/pane-completion-protocol.ts";
 import { emitDiagnostic, registerAmbientUi, createDiagnosticCollector, type DiagnosticContext } from "./diagnostics/diagnostics.ts";
@@ -1040,7 +1041,7 @@ export function buildPaneCdPrefix(
  */
 export async function launchSubagent(
   params: SubagentParamsType,
-  ctx: { sessionManager: { getSessionFile(): string | null; getSessionId(): string; getSessionDir(): string }; cwd: string },
+  ctx: { sessionManager: { getSessionFile(): string | null; getSessionId(): string; getSessionDir(): string }; cwd: string; isProjectTrusted?: () => boolean },
   options?: { surface?: string; diagnostics?: DiagnosticContext },
 ): Promise<RunningSubagent> {
   const startTime = Date.now();
@@ -1201,6 +1202,16 @@ export async function launchSubagent(
     // Build pi command
     const parts: string[] = ["pi"];
     parts.push("--session", shellEscape(spec.subagentSessionFile));
+
+    // Approve project trust for this pane-spawned child run so it never stalls
+    // on Pi's interactive project-trust prompt and does not silently skip
+    // project-local resources merely because it runs as a subagent. This is a
+    // per-run input-loading decision, separate from executionPolicy, and writes
+    // no persistent trust state. Parent-side `.pi/agents` discovery remains
+    // gated on ctx.isProjectTrusted() in resolveLaunchSpec.
+    for (const trustArg of buildPiProjectTrustArgs()) {
+      parts.push(shellEscape(trustArg));
+    }
 
     const subagentDonePath = join(SUBAGENTS_DIR, "tools", "subagent-done.ts");
     parts.push("-e", shellEscape(subagentDonePath));
@@ -2511,6 +2522,17 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         if (isPiResume) {
           // Pi sessionPath branch.
           const parts = ["pi", "--session", shellEscape(params.sessionPath!)];
+
+          // Approve project trust for this resumed child run so the pane Pi
+          // child never stalls on Pi's interactive project-trust prompt and
+          // does not silently skip project-local resources merely because it
+          // runs as a resumed subagent — mirroring the initial pane/headless Pi
+          // launch paths. This is a per-run input-loading decision, separate
+          // from executionPolicy, and writes no persistent trust state.
+          for (const trustArg of buildPiProjectTrustArgs()) {
+            parts.push(shellEscape(trustArg));
+          }
+
           const subagentDonePath = join(SUBAGENTS_DIR, "tools", "subagent-done.ts");
           parts.push("-e", shellEscape(subagentDonePath));
 

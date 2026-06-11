@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { LineBuffer } from "./line-buffer.ts";
 import {
+  buildPiProjectTrustArgs,
   resolveLaunchSpec,
   resolvePiToolsArg,
   warnGuardedPolicyUnsupported,
@@ -167,6 +168,7 @@ function getFinalOutput(transcript: TranscriptMessage[]): string {
 export function makeHeadlessBackend(ctx: {
   sessionManager: ExtensionContext["sessionManager"];
   cwd: string;
+  isProjectTrusted?: () => boolean;
 }): Backend {
   const launches = new Map<string, HeadlessLaunch>();
 
@@ -355,6 +357,11 @@ async function runPiHeadless(p: RunParams): Promise<BackendResult> {
     "-e", subagentDonePath,
     "--mode", "json",
     "--print",
+    // Approve project trust for this child run so the headless subagent never
+    // stalls on Pi's project-trust prompt and does not silently skip
+    // project-local resources. This is a per-run input-loading decision and is
+    // separate from executionPolicy; it writes no persistent trust state.
+    ...buildPiProjectTrustArgs(),
   ];
   if (spec.effectiveModel) {
     const model = spec.effectiveThinking

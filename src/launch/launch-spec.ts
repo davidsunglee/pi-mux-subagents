@@ -338,19 +338,32 @@ function parseAgentDefaultsFromContent(content: string): AgentDefaults | null {
  * deterministic agent fixtures.
  *
  * Accepts a legacy positional `searchDirs: string[]` or the new options-bag
- * form `{ searchDirs?, projectRoot? }`.
+ * form `{ searchDirs?, projectRoot?, projectTrusted? }`.
+ *
+ * `projectTrusted` gates the project-local `.pi/agents/` lookup: when it is
+ * explicitly `false`, that path is dropped so an untrusted repository cannot
+ * supply agent frontmatter (model, tools, execution-policy, cwd, …) that would
+ * influence launch behavior before project trust is established. When omitted
+ * the project-local path is searched as before (trusted by default), preserving
+ * legacy behavior for callers that do not observe project trust. The explicit
+ * `searchDirs` escape hatch is never gated — it points at deterministic
+ * fixtures owned by the caller, not at repo-supplied config.
  */
 export function loadAgentDefaults(
   agentName: string,
-  searchDirsOrOptions?: string[] | { searchDirs?: string[]; projectRoot?: string },
+  searchDirsOrOptions?:
+    | string[]
+    | { searchDirs?: string[]; projectRoot?: string; projectTrusted?: boolean },
 ): AgentDefaults | null {
   let searchDirs: string[] | undefined;
   let projectRoot: string | undefined;
+  let projectTrusted = true;
   if (Array.isArray(searchDirsOrOptions)) {
     searchDirs = searchDirsOrOptions;
   } else if (searchDirsOrOptions) {
     searchDirs = searchDirsOrOptions.searchDirs;
     projectRoot = searchDirsOrOptions.projectRoot;
+    if (searchDirsOrOptions.projectTrusted === false) projectTrusted = false;
   }
 
   const paths: string[] = [];
@@ -361,8 +374,12 @@ export function loadAgentDefaults(
   } else {
     const configDir = getAgentConfigDir();
     const effectiveProjectRoot = projectRoot ?? process.cwd();
+    // Skip the project-local `.pi/agents/` candidate for untrusted projects so
+    // repo-supplied frontmatter cannot bootstrap launch behavior before trust.
+    if (projectTrusted) {
+      paths.push(join(effectiveProjectRoot, ".pi", "agents", `${agentName}.md`));
+    }
     paths.push(
-      join(effectiveProjectRoot, ".pi", "agents", `${agentName}.md`),
       join(configDir, "agents", `${agentName}.md`),
       join(getBundledAgentsDir(), `${agentName}.md`),
     );
@@ -553,6 +570,33 @@ export interface LaunchSpecContext {
     getSessionFile?(): string | null;
   };
   cwd: string;
+  /**
+   * Effective project-trust decision for the parent session, as reported by Pi
+   * `ctx.isProjectTrusted()` (available since Pi 0.79.1). Optional so tests and
+   * older callers that do not observe project trust keep the legacy behavior of
+   * treating the project as trusted. When this returns `false`, project-local
+   * `.pi/agents/` discovery is skipped (see `loadAgentDefaults`).
+   */
+  isProjectTrusted?: () => boolean;
+}
+
+/**
+ * Per-launch Pi project-trust override for a child process the framework starts
+ * on the user's behalf. Pi 0.79.0 added `--approve` / `--no-approve` one-run
+ * controls over project trust; `--approve` approves project-local input loading
+ * (settings, resources, packages, extensions, skills) for THIS run only and does
+ * NOT cause pi-mux-subagents to write the user's persistent trust state. We pass
+ * it on both the pane and headless Pi launch paths so subagents do not stall on
+ * the interactive project-trust prompt and do not silently skip project-local
+ * resources merely because they run as subagents — mirroring how Codex launches
+ * receive a per-launch trusted-project override and Claude launches bypass the
+ * workspace-trust dialog. This is a launch-time input-loading decision and is
+ * deliberately separate from `executionPolicy` (backend autonomy/sandboxing).
+ *
+ * Returns RAW tokens (no shell escaping); pane callers shell-escape each token.
+ */
+export function buildPiProjectTrustArgs(): string[] {
+  return ["--approve"];
 }
 
 function validateSpawningToolsConflict(
@@ -589,10 +633,15 @@ export function resolveLaunchSpec(
       ? params.cwd
       : join(ctx.cwd, params.cwd)
     : null;
+  // Gate project-local `.pi/agents/` discovery on the parent session's
+  // effective project-trust decision. Absent `isProjectTrusted` (older runtime
+  // or test stubs) we keep the legacy trusted-by-default behavior.
+  const projectTrusted = ctx.isProjectTrusted ? ctx.isProjectTrusted() : true;
   const agentDefs = params.agent
     ? loadAgentDefaults(params.agent, {
         searchDirs: opts?.agentSearchDirs,
         projectRoot: preResolvedTargetCwd ?? ctx.cwd,
+        projectTrusted,
       })
     : null;
 
