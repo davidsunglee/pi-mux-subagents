@@ -82,7 +82,7 @@ describe("pane launch warnings", () => {
     }
 
     assert.equal(
-      stderr.includes("[pi-mux-subagents]"),
+      stderr.includes("[subagents]"),
       false,
       `interactive pane warnings must not write raw stderr because it corrupts the active TUI editor; got ${JSON.stringify(stderr)}`,
     );
@@ -93,7 +93,7 @@ describe("pane launch warnings", () => {
       `expected subagent name in UI warning; got ${JSON.stringify(notifications[0].message)}`,
     );
     assert.ok(
-      notifications[0].message.includes("ignoring tools=read, write, grep, find, ls"),
+      notifications[0].message.includes("tools ignored: read, write, grep, find, ls"),
       `expected tools warning in UI notification; got ${JSON.stringify(notifications[0].message)}`,
     );
   });
@@ -175,7 +175,7 @@ describe("pane launch warnings", () => {
 
     assert.equal(notifications.length, 0, "no UI present -> must not notify");
     assert.ok(
-      stderr.includes("ignoring tools=read, write, grep, find, ls"),
+      stderr.includes("tools ignored: read, write, grep, find, ls"),
       `expected codex tools warning on stderr; got ${JSON.stringify(stderr)}`,
     );
     assert.ok(stderr.includes("step-1"));

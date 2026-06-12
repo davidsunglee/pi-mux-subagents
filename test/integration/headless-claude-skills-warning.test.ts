@@ -56,8 +56,8 @@ describe("headless-claude-skills-warning", { skip: !CLAUDE_AVAILABLE, timeout: 1
 
       assert.equal(result.exitCode, 0, `Claude should still complete cleanly; error=${result.error}`);
 
-      assert.match(stderrCapture, /ignoring skills=.*on Claude path/i,
-        `expected skills-drop warning in stderr; got:\n${stderrCapture}`);
+      assert.match(stderrCapture, /skills ignored: plan, code-review \(Claude doesn't support skill allowlists yet\)/i,
+        `expected shortened skills-drop warning in stderr; got:\n${stderrCapture}`);
 
       assert.ok(!result.finalMessage.includes("/skill:"),
         `Claude response contains /skill: literal — indicates skill tokens leaked into task body.\nfinalMessage: ${result.finalMessage}`);

@@ -18,34 +18,21 @@ describe("warnCodexUnsupportedFeatures", () => {
     (process.stderr as any).write = origWrite;
   });
 
-  it("warns once for skills and once for tools on the Codex path", () => {
+  it("warns once for skills and once for tools with shortened Codex messages", () => {
     warnCodexUnsupportedFeatures("worker", "research", "read,bash");
-    const lines = captured.split("\n").filter(Boolean);
-    assert.equal(lines.length, 2, `expected exactly two warnings; got: ${JSON.stringify(captured)}`);
-    assert.ok(
-      captured.includes("ignoring skills=research"),
-      `expected skills warning; got: ${JSON.stringify(captured)}`,
-    );
-    assert.ok(
-      captured.includes("ignoring tools=read,bash"),
-      `expected tools warning; got: ${JSON.stringify(captured)}`,
-    );
-    assert.ok(
-      captured.includes("Codex path"),
-      `expected "Codex path" phrasing; got: ${JSON.stringify(captured)}`,
-    );
-    assert.ok(
-      captured.includes("worker"),
-      `expected subagent name in warning; got: ${JSON.stringify(captured)}`,
-    );
+    assert.deepEqual(captured.split("\n").filter(Boolean), [
+      "[subagents] worker: skills ignored: research (Codex doesn't support skill allowlists yet)",
+      "[subagents] worker: tools ignored: read,bash (Codex doesn't support tool allowlists yet)",
+    ]);
   });
 
-  it("notes the internal subagent_done MCP tool stays available in the tools warning", () => {
+  it("keeps the tools warning focused on the unsupported allowlist", () => {
     warnCodexUnsupportedFeatures("worker", undefined, "read");
-    assert.ok(
-      captured.includes("subagent_done"),
-      `expected the MCP-tool exception note; got: ${JSON.stringify(captured)}`,
+    assert.equal(
+      captured,
+      "[subagents] worker: tools ignored: read (Codex doesn't support tool allowlists yet)\n",
     );
+    assert.equal(captured.includes("subagent_done"), false);
   });
 
   it("is a no-op when both skills and tools are undefined", () => {
@@ -58,19 +45,11 @@ describe("warnCodexUnsupportedFeatures", () => {
     assert.equal(captured, "");
   });
 
-  it("warns that system-prompt: replace is not exactly representable and is delivered additively on Codex", () => {
+  it("warns that system-prompt=replace is appended to the Codex task", () => {
     warnCodexUnsupportedFeatures("worker", undefined, undefined, "replace");
-    assert.ok(
-      /replace/i.test(captured),
-      `expected the replace warning to mention the mode; got: ${JSON.stringify(captured)}`,
-    );
-    assert.ok(
-      /not.*representable|additiv/i.test(captured),
-      `expected the warning to say replacement is not representable / delivered additively; got: ${JSON.stringify(captured)}`,
-    );
-    assert.ok(
-      captured.includes("worker"),
-      `expected the subagent name in the warning; got: ${JSON.stringify(captured)}`,
+    assert.equal(
+      captured,
+      "[subagents] worker: system-prompt=replace unsupported by Codex; identity was appended to the task\n",
     );
   });
 

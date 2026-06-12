@@ -55,8 +55,8 @@ describe("structured warnings surface per task and exclude human-only", () => {
     await withStderr(async () => {
       const out = await runSerial([{ agent: "x", task: "t", name: "worker" }], {}, makeDeps());
       const pub = toPublicResults(out.results);
-      assert.ok(pub[0].warnings?.some((w) => w.includes("ignoring skills=research on Codex path")));
-      assert.ok(pub[0].warnings?.some((w) => w.includes("ignoring tools=read,bash on Codex path")));
+      assert.ok(pub[0].warnings?.some((w) => w.includes("skills ignored: research (Codex doesn't support skill allowlists yet)")));
+      assert.ok(pub[0].warnings?.some((w) => w.includes("tools ignored: read,bash (Codex doesn't support tool allowlists yet)")));
       assert.ok(!pub[0].warnings?.some((w) => w.includes("human-only line")));
       assert.ok(pub[0].warnings?.every((w) => w.endsWith("\n")), "collector preserves the exact producer message byte-for-byte, trailing newline intact");
     });
@@ -71,7 +71,7 @@ describe("structured warnings surface per task and exclude human-only", () => {
       );
       const pub = toPublicResults(out.results);
       for (const r of pub) {
-        assert.ok(r.warnings?.some((w) => w.includes("ignoring skills=research")));
+        assert.ok(r.warnings?.some((w) => w.includes("skills ignored: research")));
         assert.ok(!r.warnings?.some((w) => w.includes("human-only line")));
       }
     });
@@ -92,7 +92,7 @@ describe("structured warnings surface per task and exclude human-only", () => {
       assert.equal(out.blocked, true);
       assert.ok(blocked, "onBlocked should have fired");
       assert.ok(
-        blocked!.partial.warnings?.some((w) => w.includes("ignoring skills=research")),
+        blocked!.partial.warnings?.some((w) => w.includes("skills ignored: research")),
         "blocked partial must carry the launch warning so it survives resume",
       );
     });
@@ -113,7 +113,7 @@ describe("structured warnings surface per task and exclude human-only", () => {
       );
       assert.ok(blocked, "onBlocked should have fired");
       assert.ok(
-        blocked!.partial.warnings?.some((w) => w.includes("ignoring skills=research")),
+        blocked!.partial.warnings?.some((w) => w.includes("skills ignored: research")),
         "blocked partial must carry the launch warning so it survives resume",
       );
     });

@@ -969,7 +969,7 @@ export function warnClaudeSkillsDropped(
   emitDiagnostic({
     code: "skills-dropped",
     audience: { human: true, structured: true },
-    message: `[pi-mux-subagents] ${subagentName}: ignoring skills=${effectiveSkills} on Claude path — not supported in v1\n`,
+    message: `[subagents] ${subagentName}: skills ignored: ${effectiveSkills} (Claude doesn't support skill allowlists yet)\n`,
   }, context);
 }
 
@@ -984,13 +984,13 @@ export function warnCodexUnsupportedFeatures(
     emitDiagnostic({
       code: "skills-dropped",
       audience: { human: true, structured: true },
-      message: `[pi-mux-subagents] ${subagentName}: ignoring skills=${effectiveSkills} on Codex path — not supported in v1\n`,
+      message: `[subagents] ${subagentName}: skills ignored: ${effectiveSkills} (Codex doesn't support skill allowlists yet)\n`,
     }, context);
   if (effectiveTools && effectiveTools.trim() !== "")
     emitDiagnostic({
       code: "tools-dropped",
       audience: { human: true, structured: true },
-      message: `[pi-mux-subagents] ${subagentName}: ignoring tools=${effectiveTools} on Codex path — pi tool allowlists are not applied (the internal subagent_done MCP tool is always available)\n`,
+      message: `[subagents] ${subagentName}: tools ignored: ${effectiveTools} (Codex doesn't support tool allowlists yet)\n`,
     }, context);
   // Codex has no system-prompt channel, so identity always rides the task body
   // (see identity-delivery.ts). `append` is naturally additive and needs no
@@ -1001,7 +1001,7 @@ export function warnCodexUnsupportedFeatures(
     emitDiagnostic({
       code: "codex-system-prompt-replace",
       audience: { human: true, structured: true },
-      message: `[pi-mux-subagents] ${subagentName}: system-prompt: replace is not representable on Codex (no base-instruction channel to replace) — identity was delivered additively in the task body\n`,
+      message: `[subagents] ${subagentName}: system-prompt=replace unsupported by Codex; identity was appended to the task\n`,
     }, context);
 }
 

@@ -114,9 +114,9 @@ describe("resolveLaunchSpec", () => {
       (process.stderr as any).write = orig;
     }
     const warnings = collector.drain();
-    assert.equal(warnings.length, 1);
-    assert.match(warnings[0], /execution-policy=guarded requested/);
-    assert.match(warnings[0], /'pi' backend has no guarded mode/);
+    assert.deepEqual(warnings, [
+      "[subagents] PiWorker: guarded execution unsupported by pi; using unrestricted mode\n",
+    ]);
   });
 
   it("does not warn for the implicit guarded default, unrestricted, or Claude", () => {

@@ -18,22 +18,11 @@ describe("warnClaudeSkillsDropped", () => {
     (process.stderr as any).write = origWrite;
   });
 
-  it("writes a single-line warning when effectiveSkills is non-empty", () => {
+  it("writes the shortened single-line warning when effectiveSkills is non-empty", () => {
     warnClaudeSkillsDropped("my-subagent", "plan, code-review");
-    assert.ok(
-      captured.includes("ignoring skills=plan, code-review"),
-      `expected skills list in warning; got: ${JSON.stringify(captured)}`,
-    );
-    assert.ok(
-      captured.includes("my-subagent"),
-      `expected subagent name in warning; got: ${JSON.stringify(captured)}`,
-    );
-    assert.ok(
-      captured.includes("Claude path"),
-      `expected "Claude path" phrasing so pane + headless share exact wording; got: ${JSON.stringify(captured)}`,
-    );
-    assert.equal(captured.split("\n").filter(Boolean).length, 1,
-      "warning must be a single line — multiple lines indicate a shadow emit path");
+    assert.deepEqual(captured.split("\n").filter(Boolean), [
+      "[subagents] my-subagent: skills ignored: plan, code-review (Claude doesn't support skill allowlists yet)",
+    ]);
   });
 
   it("is a no-op when effectiveSkills is undefined", () => {

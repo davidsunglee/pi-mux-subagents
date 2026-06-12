@@ -760,8 +760,7 @@ async function runClaudeHeadless(p: RunParams): Promise<BackendResult> {
       // on an otherwise-clean exit — likely means Claude's stream format changed.
       if (!sessionId && exitCode === 0) {
         process.stderr.write(
-          `[pi-mux-subagents] ${spec.name}: no system/init event seen — ` +
-            `transcriptPath will be null (Claude stream format may have changed)\n`,
+          `[subagents] ${spec.name}: no Claude session id; transcript not saved\n`,
         );
       }
       // review I2: archival may throw (EACCES, ENOSPC, race vs. session file
@@ -773,7 +772,7 @@ async function runClaudeHeadless(p: RunParams): Promise<BackendResult> {
           transcriptPath = await archiveClaudeTranscript(sessionId);
         } catch (e: any) {
           process.stderr.write(
-            `[pi-mux-subagents] transcript archive failed: ${e?.message ?? e}\n`,
+            `[subagents] transcript archive failed: ${e?.message ?? e}\n`,
           );
         }
       }
@@ -980,15 +979,14 @@ async function runCodexHeadless(p: RunParams): Promise<BackendResult> {
         transcriptPath = dest;
       } catch (e: any) {
         process.stderr.write(
-          `[pi-mux-subagents] codex transcript archive failed: ${e?.message ?? e}\n`,
+          `[subagents] codex transcript archive failed: ${e?.message ?? e}\n`,
         );
         transcriptPath = null;
       }
 
       if (exitCode === 0 && !sessionId) {
         process.stderr.write(
-          `[pi-mux-subagents] ${spec.name}: no thread.started session id seen - ` +
-            `resume will be unavailable (Codex JSON format may have changed)\n`,
+          `[subagents] ${spec.name}: no Codex session id; resume unavailable\n`,
         );
       }
 
@@ -1056,8 +1054,7 @@ async function archiveClaudeTranscript(sessionId: string): Promise<string | null
   const sourceFile = await findClaudeSessionFile(sessionId, 2000);
   if (!sourceFile) {
     process.stderr.write(
-      `[pi-mux-subagents] Claude session file ${sessionId}.jsonl not found ` +
-        `under ~/.claude/projects/*/ after 2s; transcriptPath will be null.\n`,
+      `[subagents] Claude transcript not found for ${sessionId}; transcript not saved\n`,
     );
     return null;
   }

@@ -122,10 +122,10 @@ describe("pane-claude-skills-warning (review-v11 finding 2)", () => {
 
     assert.ok(captured.includes("pane-subagent"),
       `expected subagent name in warning (review-v11 finding 2 regression: pane call site removed); got: ${JSON.stringify(captured)}`);
-    assert.ok(captured.includes("ignoring skills=plan, code-review"),
+    assert.ok(captured.includes("skills ignored: plan, code-review"),
       `expected skills list in warning; got: ${JSON.stringify(captured)}`);
-    assert.ok(captured.includes("Claude path"),
-      `expected "Claude path" wording so pane + headless match; got: ${JSON.stringify(captured)}`);
+    assert.ok(captured.includes("Claude doesn't support skill allowlists yet"),
+      `expected shortened Claude skill-allowlist warning; got: ${JSON.stringify(captured)}`);
   });
 
   it("launchSubagent() is silent on stderr when skills are empty on the pane Claude branch", async () => {
@@ -163,7 +163,7 @@ describe("pane-claude-skills-warning (review-v11 finding 2)", () => {
       rmSync(sessionDir, { recursive: true, force: true });
     }
 
-    assert.equal(captured.includes("ignoring skills="), false,
+    assert.equal(captured.includes("skills ignored:"), false,
       `expected no skills-dropped warning when no skills declared; got stderr: ${JSON.stringify(captured)}`);
   });
 

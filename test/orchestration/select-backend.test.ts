@@ -73,7 +73,7 @@ describe("selectBackend", () => {
     process.env.PI_SUBAGENT_MODE = "bogus";
     selectBackend();
     selectBackend(); // second call — should NOT re-warn
-    const hits = stderrCapture.match(/PI_SUBAGENT_MODE="bogus" invalid/g) ?? [];
+    const hits = stderrCapture.match(/invalid PI_SUBAGENT_MODE="bogus"/g) ?? [];
     assert.equal(hits.length, 1, `expected exactly one warn, got ${hits.length}`);
   });
 
@@ -107,7 +107,7 @@ describe("selectBackend", () => {
     // stderr path (no UI): the existing resolver returns the null latestCtx.
     process.env.PI_SUBAGENT_MODE = "bogus";
     selectBackend();
-    assert.ok(stderrCapture.includes('PI_SUBAGENT_MODE="bogus" invalid'));
+    assert.ok(stderrCapture.includes('invalid PI_SUBAGENT_MODE="bogus"'));
 
     // UI path: swap in an ambient UI; dedupe means a NEW invalid value is needed.
     const prev = diag.getAmbientUi();
@@ -118,7 +118,7 @@ describe("selectBackend", () => {
       selectBackend();
       assert.equal(notes.length, 1);
       assert.equal(notes[0].t, "warning");
-      assert.ok(notes[0].m.includes('PI_SUBAGENT_MODE="bogus2" invalid'));
+      assert.ok(notes[0].m.includes('invalid PI_SUBAGENT_MODE="bogus2"'));
       assert.equal(notes[0].m.endsWith("\n"), false, "UI text has trailing newline stripped");
     } finally {
       diag.setAmbientUi(prev);

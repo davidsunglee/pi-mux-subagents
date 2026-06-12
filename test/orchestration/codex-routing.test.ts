@@ -51,6 +51,43 @@ describe("headless backend routes cli: codex to the codex binary", () => {
     assert.equal(result.exitCode, 0, "clean turn.completed must yield exitCode 0");
   });
 
+  it("warns with user-facing wording when Codex exits cleanly without a session id", async () => {
+    __test__.setSpawn(((_binary: string, _args: string[]) => {
+      const ee = new EventEmitter() as any;
+      ee.stdout = new EventEmitter();
+      ee.stderr = new EventEmitter();
+      ee.stdin = { write: () => true, end: () => {} };
+      ee.killed = false;
+      ee.kill = () => true;
+      setImmediate(() => {
+        ee.stdout.emit("data", Buffer.from(JSON.stringify({ type: "turn.completed", usage: {} }) + "\n"));
+        ee.emit("exit", 0);
+        ee.emit("close", 0);
+      });
+      return ee;
+    }) as any);
+
+    let stderr = "";
+    const origWrite = process.stderr.write.bind(process.stderr);
+    (process.stderr as any).write = (chunk: string | Buffer): boolean => {
+      stderr += typeof chunk === "string" ? chunk : chunk.toString();
+      return true;
+    };
+    try {
+      const backend = makeHeadlessBackend(ctx);
+      const handle = await backend.launch({ name: "C", task: "t", cli: "codex" } as any, false);
+      const result: BackendResult = await backend.watch(handle);
+
+      assert.equal(result.exitCode, 0, "clean turn.completed must yield exitCode 0");
+      assert.ok(
+        stderr.includes("[subagents] C: no Codex session id; resume unavailable\n"),
+        `expected shortened Codex session-id warning; got ${JSON.stringify(stderr)}`,
+      );
+    } finally {
+      (process.stderr as any).write = origWrite;
+    }
+  });
+
   it("prefers a structured turn.failed message over benign stderr on non-zero exit", async () => {
     __test__.setSpawn(((_binary: string, _args: string[]) => {
       const ee = new EventEmitter() as any;
