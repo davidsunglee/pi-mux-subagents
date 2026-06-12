@@ -1,11 +1,11 @@
 ---
 name: release
-description: Create a GitHub release with changelog. Use when asked to "release", "cut a release", "publish version", "bump version", "create release".
+description: Create a GitHub and npm release with changelog, preflight checks, and a gitleaks scan. Use when asked to "release", "cut a release", "publish version", "bump version", "create release".
 ---
 
 # Release
 
-Create a versioned GitHub release with an auto-generated changelog from commits since the last release.
+Create a versioned GitHub release and publish the npm package with an auto-generated changelog from commits since the last release.
 
 ## Step 1: Determine Version
 
@@ -75,18 +75,49 @@ Bump the version in `package.json`:
 # Read, update, write back — don't use npm version (it may auto-commit)
 ```
 
-Use a precise edit to change only the version field.
+Use a precise edit to change only the version field. Update lockfiles only if the project requires it for the version bump.
 
-## Step 4: Commit, Tag, Push
+## Step 4: Pre-release Verification and Git Leaks Check
+
+Run all release gates before committing, tagging, pushing, creating the GitHub release, or publishing to npm.
+
+At minimum:
+
+```bash
+git status --short --branch
+pnpm run check
+gitleaks detect --source . --verbose --redact
+```
+
+Run any additional release-appropriate project checks the user requests, such as integration or slow test suites.
+
+Do **not** continue if any verification command fails or if `gitleaks` reports findings. If `gitleaks` is unavailable, stop and ask the user whether to install it or use an approved alternative; do not skip the leak check silently.
+
+## Step 5: Commit, Tag, Push
 
 ```bash
 git add package.json
+# Also add lockfiles or generated artifacts if they intentionally changed.
 git commit -m "chore(release): v<VERSION>"
 git tag v<VERSION>
-git push && git push --tags
+git push origin HEAD
+git push origin v<VERSION>
 ```
 
-## Step 5: Create GitHub Release
+## Step 6: Publish to npm
+
+Confirm npm authentication, inspect the package contents, then publish:
+
+```bash
+npm whoami
+npm publish --dry-run --access public
+npm publish --access public
+npm view <PACKAGE_NAME>@<VERSION> version
+```
+
+Use the package name from `package.json`. Keep `--access public` for scoped public packages.
+
+## Step 7: Create GitHub Release
 
 ```bash
 gh release create v<VERSION> --title "v<VERSION>" --notes "<CHANGELOG>"
@@ -100,12 +131,15 @@ gh release create v<VERSION> --title "v<VERSION>" --notes-file /tmp/release-note
 rm /tmp/release-notes.md
 ```
 
-## Step 6: Verify
+## Step 8: Verify
 
-Confirm the release was created:
+Confirm the release, tag, npm package, and local repository state:
 
 ```bash
 gh release view v<VERSION>
+git ls-remote --tags origin v<VERSION>
+npm view <PACKAGE_NAME>@<VERSION> version
+git status --short --branch
 ```
 
 Print a summary:
@@ -113,5 +147,6 @@ Print a summary:
 ```
 ✅ Released v<VERSION>
    Tag: v<VERSION>
-   URL: https://github.com/<owner>/<repo>/releases/tag/v<VERSION>
+   GitHub: https://github.com/<owner>/<repo>/releases/tag/v<VERSION>
+   npm: <PACKAGE_NAME>@<VERSION>
 ```
