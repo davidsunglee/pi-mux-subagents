@@ -1,6 +1,6 @@
 ---
 name: release
-description: Create a GitHub and npm release with a todo checklist, changelog, preflight checks, and a gitleaks scan. Use when asked to "release", "cut a release", "publish version", "bump version", "create release".
+description: Create a GitHub and npm release with a todo checklist, reviewed changelog, preflight checks, and a gitleaks scan. Use when asked to "release", "cut a release", "publish version", "bump version", "create release".
 ---
 
 # Release
@@ -16,19 +16,21 @@ Use these canonical tasks, adapting names only when the project has a more speci
 1. Confirm release version
 2. Audit release state
 3. Prepare release notes
-4. Bump package version
-5. Run pre-release verification
-6. Run git leaks check
-7. Commit and tag release
-8. Push release refs
-9. Publish npm package
-10. Create GitHub release
-11. Verify release end to end
+4. Review release notes
+5. Bump package version
+6. Run pre-release verification
+7. Run git leaks check
+8. Commit and tag release
+9. Push release refs
+10. Publish npm package
+11. Create GitHub release
+12. Verify release end to end
 
 Include these dependencies:
 
-- Bump package version depends on confirming the release version.
 - Prepare release notes depends on auditing release state.
+- Review release notes depends on preparing release notes.
+- Bump package version depends on confirming the release version and approving the release notes.
 - Pre-release verification and git leaks check depend on the version bump.
 - Commit and tag release depends on pre-release verification and git leaks check.
 - Push release refs depends on commit and tag release.
@@ -59,7 +61,7 @@ Resolve semver:
 - `major` → (X+1).0.0
 - Exact version string → use as-is
 
-## Step 2: Generate Changelog
+## Step 2: Generate Release Notes
 
 Get commits since the last tag (or all commits if no tags exist):
 
@@ -100,7 +102,23 @@ Example output:
 - Truncate widget lines to terminal width
 ```
 
-## Step 3: Update package.json
+Write the draft to a temporary file, for example `/tmp/release-notes-v<VERSION>.md`, so it can be reviewed, edited, and later passed to `gh release create --notes-file`.
+
+## Step 3: Manual Release Notes Review
+
+Show the release notes draft to the user and explicitly ask for review before continuing.
+
+Required behavior:
+
+- Provide the release notes file path.
+- Paste or summarize the full draft in the conversation.
+- Pause for user approval or edits.
+- If the user requests changes, edit the notes and show the revised draft.
+- Do **not** continue to version bump, verification, commit/tag, push, npm publish, or GitHub release creation until the user explicitly approves the release notes.
+
+Use the reviewed notes file for the GitHub release. Do not regenerate or replace the approved notes later unless the user asks.
+
+## Step 4: Update package.json
 
 Bump the version in `package.json`:
 
@@ -110,7 +128,7 @@ Bump the version in `package.json`:
 
 Use a precise edit to change only the version field. Update lockfiles only if the project requires it for the version bump.
 
-## Step 4: Pre-release Verification and Git Leaks Check
+## Step 5: Pre-release Verification and Git Leaks Check
 
 Run all release gates before committing, tagging, pushing, creating the GitHub release, or publishing to npm.
 
@@ -126,7 +144,7 @@ Run any additional release-appropriate project checks the user requests, such as
 
 Do **not** continue if any verification command fails or if `gitleaks` reports findings. If `gitleaks` is unavailable, stop and ask the user whether to install it or use an approved alternative; do not skip the leak check silently.
 
-## Step 5: Commit, Tag, Push
+## Step 6: Commit, Tag, Push
 
 ```bash
 git add package.json
@@ -137,7 +155,7 @@ git push origin HEAD
 git push origin v<VERSION>
 ```
 
-## Step 6: Publish to npm
+## Step 7: Publish to npm
 
 Confirm npm authentication, inspect the package contents, then publish:
 
@@ -150,21 +168,21 @@ npm view <PACKAGE_NAME>@<VERSION> version
 
 Use the package name from `package.json`. Keep `--access public` for scoped public packages.
 
-## Step 7: Create GitHub Release
+## Step 8: Create GitHub Release
+
+Use the reviewed release notes file from Step 3:
 
 ```bash
-gh release create v<VERSION> --title "v<VERSION>" --notes "<CHANGELOG>"
+gh release create v<VERSION> --title "v<VERSION>" --notes-file /tmp/release-notes-v<VERSION>.md
 ```
 
-Pass the generated changelog as the `--notes` value. Use a temp file if the changelog is long:
+If the notes are intentionally inline instead of file-backed, pass the reviewed changelog as the `--notes` value:
 
 ```bash
-echo "<CHANGELOG>" > /tmp/release-notes.md
-gh release create v<VERSION> --title "v<VERSION>" --notes-file /tmp/release-notes.md
-rm /tmp/release-notes.md
+gh release create v<VERSION> --title "v<VERSION>" --notes "<REVIEWED_CHANGELOG>"
 ```
 
-## Step 8: Verify
+## Step 9: Verify
 
 Confirm the release, tag, npm package, and local repository state:
 
