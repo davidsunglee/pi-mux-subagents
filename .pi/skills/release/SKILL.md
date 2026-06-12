@@ -157,7 +157,9 @@ git push origin v<VERSION>
 
 ## Step 7: Publish to npm
 
-Confirm npm authentication, inspect the package contents, then publish:
+Do **not** run `npm publish` from the agent session. The user handles npm publication directly so one-time passwords, browser auth, and publish credentials never need to enter the agent session.
+
+Print the exact commands for the user to run from the repository root, then pause until the user confirms publication completed:
 
 ```bash
 npm whoami
@@ -166,7 +168,13 @@ npm publish --access public
 npm view <PACKAGE_NAME>@<VERSION> version
 ```
 
-Use the package name from `package.json`. Keep `--access public` for scoped public packages.
+Use the package name from `package.json`. Keep `--access public` for scoped public packages. If npm asks for OTP or web authentication, the user should complete it outside the agent session. Do not ask the user to paste OTP codes into the conversation.
+
+After the user confirms publication, verify with:
+
+```bash
+npm view <PACKAGE_NAME>@<VERSION> version
+```
 
 ## Step 8: Create GitHub Release
 
