@@ -245,6 +245,10 @@ export function buildPiCommand(
   return [
     `cd ${shellEscape(testDir)} &&`,
     `pi`,
+    // Integration parent sessions run from fresh temp project roots. Approve
+    // trust for this one run so they load project-local test agents/extensions
+    // without stalling on Pi's interactive project-trust prompt.
+    `--approve`,
     `-ne`,
     `-e ${shellEscape(EXTENSION_SOURCE)}`,
     `--model ${shellEscape(model)}`,

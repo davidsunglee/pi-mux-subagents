@@ -57,6 +57,18 @@ describe("integration harness: working-tree extension loading", () => {
     );
   });
 
+  it("buildPiCommand approves project trust for unattended temp projects", () => {
+    const cmd = buildPiCommand("/tmp/some-test-dir", "do a thing", {
+      model: "anthropic/claude-haiku-4-5",
+    });
+
+    assert.match(
+      cmd,
+      /(^|\s)--approve(\s|$)/,
+      `command must pass --approve so integration parents do not stall on Pi project trust: ${cmd}`,
+    );
+  });
+
   it("buildPiCommand still honors model and extraArgs (existing harness contract)", () => {
     const cmd = buildPiCommand("/tmp/some-test-dir", "task body", {
       model: "anthropic/claude-haiku-4-5",
