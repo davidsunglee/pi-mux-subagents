@@ -1,11 +1,44 @@
 ---
 name: release
-description: Create a GitHub and npm release with changelog, preflight checks, and a gitleaks scan. Use when asked to "release", "cut a release", "publish version", "bump version", "create release".
+description: Create a GitHub and npm release with a todo checklist, changelog, preflight checks, and a gitleaks scan. Use when asked to "release", "cut a release", "publish version", "bump version", "create release".
 ---
 
 # Release
 
 Create a versioned GitHub release and publish the npm package with an auto-generated changelog from commits since the last release.
+
+## Step 0: Create or Refresh Release Todos
+
+Before doing release work, create a todo checklist so `/release` can drive the whole process visibly. If a release checklist already exists, refresh it instead of duplicating tasks.
+
+Use these canonical tasks, adapting names only when the project has a more specific convention:
+
+1. Confirm release version
+2. Audit release state
+3. Prepare release notes
+4. Bump package version
+5. Run pre-release verification
+6. Run git leaks check
+7. Commit and tag release
+8. Push release refs
+9. Publish npm package
+10. Create GitHub release
+11. Verify release end to end
+
+Include these dependencies:
+
+- Bump package version depends on confirming the release version.
+- Prepare release notes depends on auditing release state.
+- Pre-release verification and git leaks check depend on the version bump.
+- Commit and tag release depends on pre-release verification and git leaks check.
+- Push release refs depends on commit and tag release.
+- Publish npm package depends on pushed release refs.
+- Create GitHub release depends on pushed release refs and npm publication.
+- Verify release end to end depends on npm publication and GitHub release creation.
+
+If audit discovers a blocker, such as missing npm authentication, create a separate blocker todo and add it to the affected downstream task instead of dropping or silently skipping that release step.
+
+Mark exactly one todo as in progress at a time, and update each todo immediately as the release advances.
 
 ## Step 1: Determine Version
 
